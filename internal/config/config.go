@@ -1,37 +1,88 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
+
 
 type Config struct {
-	Port          string
-	DBHost        string
-	DBPort        string
-	DBUser        string
-	DBPass        string
-	DBName        string
-	JWTSecret     string
-	ClickUpToken  string
+	// APP
+	AppEnv string
+	Port   string
+
+	// Database
+	DBHost string
+	DBPort string
+	DBUser string
+	DBPass string
+	DBName string
+
+	JWTSecret string
+	ClickUpToken string
 	ClickUpTeamID string
+
+	// Admin login
+	AdminUsername string
+	AdminPassword string
+
+	// Underload ≤ 35 hours/week
+	// Normal 36–45 hours/week
+	// Overload ≥ 60 hours/week
+	WorkloadUnderload float64
+	WorkloadNormalMin float64
+	WorkloadNormalMax float64
+	WorkloadOverload  float64
 }
 
-func LoadFromEnv() *Config {
-	return &Config{
-		Port:          os.Getenv("PORT"),
-		DBHost:        getenv("DB_HOST", "localhost"),
-		DBPort:        getenv("DB_PORT", "5432"),
-		DBUser:        getenv("DB_USER", "postgres"),
-		DBPass:        getenv("DB_PASS", "aufa"),
-		DBName:        getenv("DB_NAME", "kinerja_db"),
-		JWTSecret:     getenv("JWT_SECRET", "replace_this_jwt_secret"),
-		ClickUpToken:  os.Getenv("CLICKUP_TOKEN"),
-		ClickUpTeamID: os.Getenv("CLICKUP_TEAM_ID"),
+func Load() (*Config, error) {
+	cfg := &Config{
+		// App
+		AppEnv: getEnv("APP_ENV", "development"),
+		Port:   getEnv("PORT", "8080"),
+
+		// DB
+		DBHost: getEnv("DB_HOST", "127.0.0.1"),
+		DBPort: getEnv("DB_PORT", "5432"),
+		DBUser: getEnv("DB_USER", "postgres"),
+		DBPass: getEnv("DB_PASS", "aufa"),
+		DBName: getEnv("DB_NAME", "kinerja_db"),
+
+		// JWT
+		JWTSecret: getEnv("JWT_SECRET", "secret123"),
+
+		// ClickUp
+		ClickUpToken: getEnv("CLICKUP_TOKEN", "pk_101582122_8YV9NZHLPHQ75C9TWGM4RHB0U9MZJ2C2"),
+		ClickUpTeamID: getEnv("CLICKUP_TEAM_ID", "901812499939"),
+
+		// Admin login
+		AdminUsername: getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword: getEnv("ADMIN_PASSWORD", "dnakinerja-2025"),
+
+		// Workload settings
+		WorkloadUnderload: getEnvFloat("WORKLOAD_UNDERLOAD", 35),
+		WorkloadNormalMin: getEnvFloat("WORKLOAD_NORMAL_MIN", 36),
+		WorkloadNormalMax: getEnvFloat("WORKLOAD_NORMAL_MAX", 45),
+		WorkloadOverload:  getEnvFloat("WORKLOAD_OVERLOAD", 60),
 	}
+
+	return cfg, nil
 }
 
-func getenv(k, d string) string {
-	v := os.Getenv(k)
-	if v == "" {
-		return d
+// getEnv returns environment variable or default value.
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
-	return v
+	return defaultValue
+}
+
+// getEnvFloat returns float from env or default.
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
+	}
+	return defaultValue
 }

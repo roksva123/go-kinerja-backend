@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/roksva123/go-kinerja-backend/internal/model"
 	"github.com/roksva123/go-kinerja-backend/internal/repository"
 )
 
@@ -17,39 +18,55 @@ type AuthHandler struct {
 	JWTSecret string
 }
 
-func NewAuthHandler(repo *repository.PostgresRepo, secret string) *AuthHandler {
-	return &AuthHandler{Repo: repo, JWTSecret: secret}
-}
-
-type loginReq struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+func NewAuthHandler(repo *repository.PostgresRepo, jwtSecret string) *AuthHandler {
+	return &AuthHandler{Repo: repo, JWTSecret: jwtSecret}
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
-	var req loginReq
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+	var req model.LoginRequest
+	var response model.ResponseApi
+
+	// Validate JSON
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ApiMessage = "Invalid request: " + err.Error()
+		c.JSON(http.StatusBadRequest, response)
 		return
 	}
 
+	// Fetch admin by username
 	admin, err := h.Repo.GetAdminByUsername(context.Background(), req.Username)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid login"})
+		response.ApiMessage = "Username or password is incorrect"
+		c.JSON(http.StatusUnauthorized, response)
 		return
 	}
 
+	// Compare password using bcrypt
 	if bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)) != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "wrong password"})
+		response.ApiMessage = "Username or password is incorrect"
+		c.JSON(http.StatusUnauthorized, response)
 		return
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	// Create JWT token
+	claims := jwt.MapClaims{
 		"sub": admin.ID,
-		"exp": time.Now().Add(10 * time.Hour).Unix(),
 		"iat": time.Now().Unix(),
-	})
+		"exp": time.Now().Add(12 * time.Hour).Unix(),
+	}
 
-	signed, _ := token.SignedString([]byte(h.JWTSecret))
-	c.JSON(http.StatusOK, gin.H{"token": signed})
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(h.JWTSecret))
+	if err != nil {
+		response.ApiMessage = "Failed to generate token"
+		c.JSON(http.StatusInternalServerError, response)
+		return
+	}
+
+	response.ApiMessage = "Login Successful"
+	response.Data = model.LoginResponse{
+		Token: tokenString,
+	}
+
+	c.JSON(http.StatusOK, response)
 }

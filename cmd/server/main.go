@@ -1,65 +1,86 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
-
 	"github.com/roksva123/go-kinerja-backend/internal/api/handlers"
 	"github.com/roksva123/go-kinerja-backend/internal/config"
-	"github.com/roksva123/go-kinerja-backend/internal/middleware"
 	"github.com/roksva123/go-kinerja-backend/internal/repository"
 	"github.com/roksva123/go-kinerja-backend/internal/service"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
-	_ = godotenv.Load()
+	// 1. LOAD CONFIG
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal("failed load config:", err)
+	}
 
-	cfg := config.LoadFromEnv()
-
-	fmt.Println("Connecting to DB...", cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBName)
-	dbCfg := &repository.DBConfig{
+	// 2. INIT DB
+	repo, err := repository.NewPostgresRepo(&repository.DBConfig{
 		Host: cfg.DBHost,
 		Port: cfg.DBPort,
 		User: cfg.DBUser,
 		Pass: cfg.DBPass,
 		Name: cfg.DBName,
-	}
-
-	repo, err := repository.NewPostgresRepo(dbCfg)
+	})
 	if err != nil {
-		log.Fatal("DB connect error:", err)
+		log.Fatal("failed connect db:", err)
 	}
 
-	clickService := service.NewClickUpService(repo, cfg.ClickUpToken, cfg.ClickUpTeamID)
+	// 3. RUN MIGRATION
+	if err := repo.RunMigrations(context.Background()); err != nil {
+		log.Fatal("migration error:", err)
+	}
 
+	// 4. SEED DEFAULT ADMIN
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+	if err := repo.UpsertAdmin(context.Background(), cfg.AdminUsername, string(hashed)); err != nil {
+		log.Println("failed seeding admin:", err)
+	} else {
+		log.Println("admin seeded OK")
+	}
+
+	// 5. CLICKUP SERVICE
+	clickService := service.NewClickUpService(
+		repo,
+		cfg.ClickUpToken,
+		cfg.ClickUpTeamID,
+	)
+
+	// 6. HANDLERS
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
-	employeeHandler := handlers.NewEmployeeHandler(repo, clickService)
+	employeeHandler := handlers.NewEmployeeHandler(repo, clickService, cfg)
 
-	app := gin.Default()
+	// 7. ROUTER
+	r := gin.Default()
 
-	v1 := app.Group("/api/v1")
+	// BASE PATH → /api/v1
+	api := r.Group("/api/v1")
+
+	// ---------- AUTH ----------
+	auth := api.Group("/auth")
 	{
-		v1.POST("/auth/login", authHandler.Login)
-
-		protected := v1.Group("")
-		protected.Use(middleware.JWTAuthMiddleware(cfg.JWTSecret))
-		{
-			protected.GET("/employees", employeeHandler.ListEmployees)
-			protected.GET("/employees/:id", employeeHandler.GetEmployee)
-			protected.GET("/employees/:id/tasks", employeeHandler.GetEmployeeTasks)
-			protected.GET("/employees/:id/performance", employeeHandler.GetEmployeePerformance)
-			protected.GET("/employees/:id/schedule", employeeHandler.GetEmployeeSchedule)
-			protected.POST("/sync/clickup", employeeHandler.SyncClickUp)
-		}
+		auth.POST("/login", authHandler.Login)
 	}
 
-	port := cfg.Port
-	if port == "" {
-		port = "8080"
+	// ---------- EMPLOYEES ----------
+	emp := api.Group("/employees")
+	{
+		emp.GET("", employeeHandler.ListEmployees)
+		emp.GET("/:id", employeeHandler.GetEmployee)
+		emp.GET("/:id/tasks", employeeHandler.GetEmployeeTasks)
+		emp.GET("/:id/performance", employeeHandler.GetEmployeePerformance)
+		emp.GET("/:id/schedule", employeeHandler.GetEmployeeSchedule)
 	}
 
-	app.Run(":" + port)
+	// ---------- CLICKUP SYNC ----------
+	api.POST("/sync/clickup", employeeHandler.SyncClickUp)
+
+	// 8. START SERVER
+	log.Println("Server running on port :", cfg.Port)
+	r.Run("0.0.0.0:" + cfg.Port)
 }

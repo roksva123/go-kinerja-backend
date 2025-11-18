@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/roksva123/go-kinerja-backend/internal/repository"
 )
 
+// ClickUpService handles fetching/syncing data from ClickUp API.
 type ClickUpService struct {
 	Repo   *repository.PostgresRepo
 	Token  string
@@ -20,6 +23,7 @@ type ClickUpService struct {
 	Client *http.Client
 }
 
+// NewClickUpService creates a new service instance.
 func NewClickUpService(repo *repository.PostgresRepo, token, teamID string) *ClickUpService {
 	return &ClickUpService{
 		Repo:   repo,
@@ -29,8 +33,12 @@ func NewClickUpService(repo *repository.PostgresRepo, token, teamID string) *Cli
 	}
 }
 
+// doRequest does an authenticated GET to ClickUp and returns body bytes.
 func (s *ClickUpService) doRequest(ctx context.Context, method, url string) ([]byte, error) {
-	req, _ := http.NewRequestWithContext(ctx, method, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", s.Token)
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -44,9 +52,10 @@ func (s *ClickUpService) doRequest(ctx context.Context, method, url string) ([]b
 	return body, nil
 }
 
+// SyncMembers fetches team members and upserts to employees table.
 func (s *ClickUpService) SyncMembers(ctx context.Context) error {
-	if s.TeamID == "" {
-		return errors.New("team id not configured")
+	if strings.TrimSpace(s.TeamID) == "" {
+		return errors.New("clickup team id not configured")
 	}
 	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/member", s.TeamID)
 	b, err := s.doRequest(ctx, "GET", url)
@@ -60,6 +69,8 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 				Email      string `json:"email"`
 				Username   string `json:"username"`
 				ProfilePic string `json:"profile_pic"`
+				CustomID   string `json:"custom_id"`
+				// more fields ignored
 			} `json:"user"`
 		} `json:"members"`
 	}
@@ -67,15 +78,20 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 		return err
 	}
 	for _, m := range out.Members {
-
-		_, _ = s.Repo.UpsertEmployeeFromClickUp(ctx, m.User.Username, m.User.Email, m.User.ID)
+		username := m.User.Username
+		email := m.User.Email
+		clickupID := m.User.ID
+		// Upsert into employees table
+		_, _ = s.Repo.UpsertEmployeeFromClickUp(ctx, username, email, clickupID)
 	}
 	return nil
 }
 
+// SyncTasks fetches tasks from ClickUp (paginated) and upserts to local tasks table.
+// It returns number of tasks processed.
 func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
-	if s.TeamID == "" {
-		return 0, errors.New("team id not configured")
+	if strings.TrimSpace(s.TeamID) == "" {
+		return 0, errors.New("clickup team id not configured")
 	}
 	page := 0
 	total := 0
@@ -95,15 +111,20 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 			break
 		}
 		for _, v := range data.Tasks {
+			// id & name
 			id, _ := v["id"].(string)
 			name, _ := v["name"].(string)
+
+			// Assignee -> internal employee id (first assignee)
 			var employeeSQL sql.NullString
 			if arr, ok := v["assignees"].([]interface{}); ok && len(arr) > 0 {
 				if a0, ok2 := arr[0].(map[string]interface{}); ok2 {
 					if aid, ok3 := a0["id"].(string); ok3 && aid != "" {
-						if emp, err := s.Repo.GetEmployeeByClickUpID(ctx, aid); err == nil {
+						// try find employee by clickup id
+						if emp, err := s.Repo.GetEmployeeByClickUpID(ctx, aid); err == nil && emp != nil {
 							employeeSQL = sql.NullString{String: emp.ID, Valid: true}
 						} else {
+							// upsert minimal employee
 							username := ""
 							if un, ok4 := a0["username"].(string); ok4 {
 								username = un
@@ -112,7 +133,7 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 							if em, ok5 := a0["email"].(string); ok5 {
 								email = em
 							}
-							if empID, err2 := s.Repo.UpsertEmployeeFromClickUp(ctx, username, email, aid); err2 == nil {
+							if empID, err2 := s.Repo.UpsertEmployeeFromClickUp(ctx, username, email, aid); err2 == nil && empID != "" {
 								employeeSQL = sql.NullString{String: empID, Valid: true}
 							}
 						}
@@ -120,62 +141,45 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 				}
 			}
 
+			// status
 			var statusSQL sql.NullString
 			if st, ok := v["status"].(map[string]interface{}); ok {
 				if sname, ok2 := st["status"].(string); ok2 && sname != "" {
 					statusSQL = sql.NullString{String: sname, Valid: true}
 				}
 			}
-			var timeEstSec sql.NullInt64
-			if te, ok := v["time_estimate"].(float64); ok && te > 0 {
-				timeEstSec = sql.NullInt64{Int64: int64(te) / 1000, Valid: true}
-			} else if teStr, ok := v["time_estimate"].(string); ok && teStr != "" {
-				if parsed, err := parseFloatStringToInt64(teStr); err == nil && parsed > 0 {
-					timeEstSec = sql.NullInt64{Int64: parsed / 1000, Valid: true}
-				}
-			}
 
+			// time_estimate and time_spent (ms)
+			var timeEstSec sql.NullInt64
+			if te, ok := tryFloatFromInterface(v["time_estimate"]); ok && te > 0 {
+				timeEstSec = sql.NullInt64{Int64: int64(te) / 1000, Valid: true}
+			}
 			var timeSpentSec sql.NullInt64
-			if ts, ok := v["time_spent"].(float64); ok && ts > 0 {
+			if ts, ok := tryFloatFromInterface(v["time_spent"]); ok && ts > 0 {
 				timeSpentSec = sql.NullInt64{Int64: int64(ts) / 1000, Valid: true}
-			} else if tsStr, ok := v["time_spent"].(string); ok && tsStr != "" {
-				if parsed, err := parseFloatStringToInt64(tsStr); err == nil && parsed > 0 {
-					timeSpentSec = sql.NullInt64{Int64: parsed / 1000, Valid: true}
-				}
 			}
 
 			// percent_complete
 			var percentSQL sql.NullFloat64
-			if pc, ok := v["percent_complete"].(float64); ok {
+			if pc, ok := tryFloat64FromInterface(v["percent_complete"]); ok {
 				percentSQL = sql.NullFloat64{Float64: pc, Valid: true}
-			} else if pcStr, ok := v["percent_complete"].(string); ok && pcStr != "" {
-				if pf, err := parseStringToFloat64(pcStr); err == nil {
-					percentSQL = sql.NullFloat64{Float64: pf, Valid: true}
-				}
 			}
+
+			// start_date and due_date: string or number (ms)
 			var startSQL sql.NullTime
 			if sd, ok := v["start_date"]; ok && sd != nil {
-				if sdStr, ok := sd.(string); ok && sdStr != "" {
-					if t, err := tryParseTime(sdStr); err == nil {
-						startSQL = sql.NullTime{Time: t, Valid: true}
-					}
-				} else if sdNum, ok := sd.(float64); ok && sdNum > 0 {
-					t := time.Unix(0, int64(sdNum)*int64(time.Millisecond))
+				if t, err := tryParseTime(sd); err == nil {
 					startSQL = sql.NullTime{Time: t, Valid: true}
 				}
 			}
-
 			var dueSQL sql.NullTime
 			if dd, ok := v["due_date"]; ok && dd != nil {
-				if ddStr, ok := dd.(string); ok && ddStr != "" {
-					if t, err := tryParseTime(ddStr); err == nil {
-						dueSQL = sql.NullTime{Time: t, Valid: true}
-					}
-				} else if ddNum, ok := dd.(float64); ok && ddNum > 0 {
-					t := time.Unix(0, int64(ddNum)*int64(time.Millisecond))
+				if t, err := tryParseTime(dd); err == nil {
 					dueSQL = sql.NullTime{Time: t, Valid: true}
 				}
 			}
+
+			// project id: sometimes at "project_id" or nested "project"
 			projectSQL := sql.NullString{}
 			if pid, ok := v["project_id"].(string); ok && pid != "" {
 				projectSQL = sql.NullString{String: pid, Valid: true}
@@ -206,27 +210,72 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 	return total, nil
 }
 
-func tryParseTime(s string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
+// helper: try parse float from interface (handles float64, string numeric, json.Number)
+func tryFloatFromInterface(v interface{}) (float64, bool) {
+	if v == nil {
+		return 0, false
 	}
-	if parsed, err := parseFloatStringToInt64(s); err == nil && parsed > 0 {
-		return time.Unix(0, parsed*int64(time.Millisecond)), nil
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		if f, err := t.Float64(); err == nil {
+			return f, true
+		}
+	case string:
+		// sometimes ClickUp returns numeric as string
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
+			return parsed, true
+		}
 	}
-	return time.Time{}, fmt.Errorf("unsupported time format: %s", s)
+	return 0, false
 }
 
-func parseFloatStringToInt64(s string) (int64, error) {
-	var f float64
-	_, err := fmt.Sscan(s, &f)
-	if err != nil {
-		return 0, err
-	}
-	return int64(f), nil
+func tryFloat64FromInterface(v interface{}) (float64, bool) {
+	return tryFloatFromInterface(v)
 }
 
-func parseStringToFloat64(s string) (float64, error) {
-	var f float64
-	_, err := fmt.Sscan(s, &f)
-	return f, err
+// tryParseTime: accepts RFC3339 string, or numeric milliseconds (float64/int/string/json.Number)
+func tryParseTime(v interface{}) (time.Time, error) {
+	if v == nil {
+		return time.Time{}, errors.New("nil")
+	}
+	switch t := v.(type) {
+	case string:
+		// try RFC3339
+		if t == "" {
+			return time.Time{}, errors.New("empty")
+		}
+		if tt, err := time.Parse(time.RFC3339, t); err == nil {
+			return tt, nil
+		}
+		// numeric string ms
+		if parsed, err := strconv.ParseInt(t, 10, 64); err == nil && parsed > 0 {
+			return time.Unix(0, parsed*int64(time.Millisecond)), nil
+		}
+		return time.Time{}, fmt.Errorf("unsupported time string: %s", t)
+	case float64:
+		if t <= 0 {
+			return time.Time{}, errors.New("invalid")
+		}
+		return time.Unix(0, int64(t)*int64(time.Millisecond)), nil
+	case int64:
+		if t <= 0 {
+			return time.Time{}, errors.New("invalid")
+		}
+		return time.Unix(0, t*int64(time.Millisecond)), nil
+	case json.Number:
+		if parsed, err := t.Int64(); err == nil && parsed > 0 {
+			return time.Unix(0, parsed*int64(time.Millisecond)), nil
+		}
+		if f, err := t.Float64(); err == nil && f > 0 {
+			return time.Unix(0, int64(f)*int64(time.Millisecond)), nil
+		}
+	}
+	return time.Time{}, errors.New("unsupported")
 }
+

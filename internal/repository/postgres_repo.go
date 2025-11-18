@@ -7,6 +7,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/roksva123/go-kinerja-backend/internal/model"
 )
 
 type DBConfig struct {
@@ -240,3 +241,48 @@ func (r *PostgresRepo) ListTasksByEmployee(ctx context.Context, employeeID strin
 	}
 	return out, nil
 }
+
+func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
+    query := `
+        INSERT INTO users (id, username, name, role)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (id) DO UPDATE SET
+            username = EXCLUDED.username,
+            name = EXCLUDED.name,
+            role = EXCLUDED.role,
+            updated_at = NOW();
+    `
+    _, err := r.DB.ExecContext(ctx, query,
+        u.ID,
+        u.Username,
+        u.Name,
+        u.Role,
+    )
+    return err
+}
+
+func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) {
+    query := `SELECT id, username, name, role, created_at, updated_at FROM users ORDER BY id`
+
+    rows, err := r.DB.QueryContext(ctx, query)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var users []model.User
+    for rows.Next() {
+        var u model.User
+        if err := rows.Scan(
+            &u.ID, &u.Username, &u.Name, &u.Role,
+            &u.CreatedAt, &u.UpdatedAt,
+        ); err != nil {
+            return nil, err
+        }
+        users = append(users, u)
+    }
+
+    return users, nil
+}
+
+

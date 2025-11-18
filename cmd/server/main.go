@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"github.com/roksva123/go-kinerja-backend/internal/api/handlers"
 	"github.com/roksva123/go-kinerja-backend/internal/config"
 	"github.com/roksva123/go-kinerja-backend/internal/repository"
@@ -13,13 +15,19 @@ import (
 )
 
 func main() {
-	// 1. LOAD CONFIG
+
+	// 1. LOAD ENV + CONFIG
+	_ = godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("failed load config:", err)
 	}
 
-	// 2. INIT DB
+	fmt.Println("Server Port      =", cfg.Port)
+	fmt.Println("ClickUp Token    =", cfg.ClickUpToken)
+	fmt.Println("ClickUp Team ID  =", cfg.ClickUpTeamID)
+
+	// 2. INIT DATABASE
 	repo, err := repository.NewPostgresRepo(&repository.DBConfig{
 		Host: cfg.DBHost,
 		Port: cfg.DBPort,
@@ -31,12 +39,12 @@ func main() {
 		log.Fatal("failed connect db:", err)
 	}
 
-	// 3. RUN MIGRATION
+	// 3. MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
 		log.Fatal("migration error:", err)
 	}
 
-	// 4. SEED DEFAULT ADMIN
+	// 4. SEED ADMIN
 	hashed, _ := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
 	if err := repo.UpsertAdmin(context.Background(), cfg.AdminUsername, string(hashed)); err != nil {
 		log.Println("failed seeding admin:", err)
@@ -44,21 +52,16 @@ func main() {
 		log.Println("admin seeded OK")
 	}
 
-	// 5. CLICKUP SERVICE
-	clickService := service.NewClickUpService(
-		repo,
-		cfg.ClickUpToken,
-		cfg.ClickUpTeamID,
-	)
+	// 5. INIT SERVICES
+	clickService := service.NewClickUpService(repo, cfg.ClickUpToken, cfg.ClickUpTeamID)
 
-	// 6. HANDLERS
+	// 6. INIT HANDLERS
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 	employeeHandler := handlers.NewEmployeeHandler(repo, clickService, cfg)
 
 	// 7. ROUTER
 	r := gin.Default()
 
-	// BASE PATH → /api/v1
 	api := r.Group("/api/v1")
 
 	// ---------- AUTH ----------
@@ -66,6 +69,9 @@ func main() {
 	{
 		auth.POST("/login", authHandler.Login)
 	}
+
+	// ---------- SYNC CLICKUP ----------
+	api.POST("/sync/clickup", employeeHandler.SyncClickUp)
 
 	// ---------- EMPLOYEES ----------
 	emp := api.Group("/employees")
@@ -77,10 +83,7 @@ func main() {
 		emp.GET("/:id/schedule", employeeHandler.GetEmployeeSchedule)
 	}
 
-	// ---------- CLICKUP SYNC ----------
-	api.POST("/sync/clickup", employeeHandler.SyncClickUp)
-
 	// 8. START SERVER
-	log.Println("Server running on port :", cfg.Port)
-	r.Run("0.0.0.0:" + cfg.Port)
+	log.Println("Server running on port:", cfg.Port)
+	r.Run(":" + cfg.Port)
 }

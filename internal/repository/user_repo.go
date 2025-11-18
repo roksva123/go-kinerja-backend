@@ -1,8 +1,10 @@
 package repository
 
 import (
-    "database/sql"
-    "github.com/roksva123/go-kinerja-backend/internal/model"
+	"context"
+	"database/sql"
+
+	"github.com/roksva123/go-kinerja-backend/internal/model"
 )
 
 type UserRepo interface {
@@ -29,4 +31,17 @@ func (r *userRepo) GetByUsername(username string) (*model.User, error) {
         return nil, err
     }
     return user, nil
+}
+
+func (r *userRepo) UpsertUser(ctx context.Context, u *model.User) error {
+	query := `
+        INSERT INTO users (id, username, name, role)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            username = VALUES(username),
+            name = VALUES(name),
+            role = VALUES(role)
+    `
+	_, err := r.db.ExecContext(ctx, query, u.ID, u.Username, u.Name, u.Role)
+	return err
 }

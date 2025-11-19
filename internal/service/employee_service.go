@@ -1,8 +1,9 @@
 package service
 
 import (
-	"github.com/roksva123/go-kinerja-backend/internal/model"
+	"strconv"
 
+	"github.com/roksva123/go-kinerja-backend/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -14,18 +15,19 @@ func NewEmployeeService(db *gorm.DB) *EmployeeService {
 	return &EmployeeService{DB: db}
 }
 
-func (s *EmployeeService) SyncClickUpUsers(users []ClickUpUser) error {
-	for _, u := range users {
-		emp := model.Employee{
-			ID:       u.ID,
-			Username: u.Username,
-			Email:    u.Email,
-			Color:    u.Color,
-		}
+func (s *EmployeeService) SyncEmployee(user model.User) error {
 
-		s.DB.Where("id = ?", emp.ID).FirstOrCreate(&emp)
+	emp := model.Employee{
+		ID:       strconv.FormatInt(user.ID, 10), // FIX DI SINI
+		Username: user.Username,
+		Email:    user.Email,
+		Color:    "", 
 	}
-	return nil
+
+	return s.DB.
+		Where("id = ?", emp.ID).
+		FirstOrCreate(&emp).
+		Error
 }
 
 func (s *EmployeeService) GetAllEmployees() ([]model.Employee, error) {

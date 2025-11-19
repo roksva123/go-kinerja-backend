@@ -16,16 +16,17 @@ import (
 
 func main() {
 
-	// 1. LOAD ENV + CONFIG
+	// 1. LOAD ENV
 	_ = godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("failed load config:", err)
 	}
 
-	fmt.Println("Server Port      =", cfg.Port)
-	fmt.Println("ClickUp Token    =", cfg.ClickUpToken)
-	fmt.Println("ClickUp Team ID  =", cfg.ClickUpTeamID)
+    fmt.Println("==================================")
+    fmt.Println("CLICKUP TOKEN RAW:", cfg.ClickUpToken)
+    fmt.Println("TOKEN LENGTH:", len(cfg.ClickUpToken))
+    fmt.Println("==================================")
 
 	// 2. INIT DATABASE
 	repo, err := repository.NewPostgresRepo(&repository.DBConfig{
@@ -39,7 +40,7 @@ func main() {
 		log.Fatal("failed connect db:", err)
 	}
 
-	// 3. MIGRATIONS
+	// 3. RUN MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
 		log.Fatal("migration error:", err)
 	}
@@ -59,21 +60,32 @@ func main() {
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 	employeeHandler := handlers.NewEmployeeHandler(repo, clickService, cfg)
 
-	// 7. ROUTER
-	r := gin.Default()
+	// **INI YANG KAMU LUPA**
+	clickupHandler := handlers.NewClickUpHandler(clickService)
 
+	// 7. SETUP ROUTER
+	r := gin.Default()
 	api := r.Group("/api/v1")
 
-	// ---------- AUTH ----------
+	// ----- CLICKUP -----
+	click := api.Group("/clickup")
+    {
+        click.POST("/sync/members", clickupHandler.SyncMembers)
+		r.POST("/api/v1/clickup/sync/team", clickupHandler.SyncTeam)
+        click.POST("/sync/tasks", clickupHandler.SyncTasks)
+    }
+
+
+	// ----- AUTH -----
 	auth := api.Group("/auth")
 	{
 		auth.POST("/login", authHandler.Login)
 	}
 
-	// ---------- SYNC CLICKUP ----------
+	// ----- SYNC CLICKUP -----
 	api.POST("/sync/clickup", employeeHandler.SyncClickUp)
 
-	// ---------- EMPLOYEES ----------
+	// ----- EMPLOYEES -----
 	emp := api.Group("/employees")
 	{
 		emp.GET("", employeeHandler.ListEmployees)

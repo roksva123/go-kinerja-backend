@@ -16,22 +16,19 @@ import (
 )
 
 // ClickUpService handles fetching/syncing data from ClickUp API.
-type ClickUpService struct {
-	Repo   *repository.PostgresRepo
-	Token  string
-	TeamID string
-	Client *http.Client
-}
 
 // NewClickUpService creates a new service instance.
-func NewClickUpService(repo *repository.PostgresRepo, token, teamID string) *ClickUpService {
-	return &ClickUpService{
-		Repo:   repo,
-		Token:  token,
-		TeamID: teamID,
-		Client: &http.Client{Timeout: 20 * time.Second},
-	}
+
+
+
+type ClickUpUser struct {
+    ID       int    `json:"id"`
+    Username string `json:"username"`
+    Email    string `json:"email"`
+    Color    string `json:"color"`
+    Role     string `json:"role"`
 }
+
 
 // doRequest does an authenticated GET to ClickUp and returns body bytes.
 func (s *ClickUpService) doRequest(ctx context.Context, method, url string) ([]byte, error) {
@@ -279,3 +276,39 @@ func tryParseTime(v interface{}) (time.Time, error) {
 	return time.Time{}, errors.New("unsupported")
 }
 
+func (s *ClickUpService) FetchClickUpUsers(ctx context.Context) ([]ClickUpUser, error) {
+    url := "https://api.clickup.com/api/v2/team"
+    req, _ := http.NewRequest("GET", url, nil)
+    req.Header.Set("Authorization", s.Token)
+
+    res, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+
+    body, _ := io.ReadAll(res.Body)
+
+    var teamRes ClickUpTeamsResponse
+    if err := json.Unmarshal(body, &teamRes); err != nil {
+        return nil, err
+    }
+
+    var users []ClickUpUser
+
+    for _, team := range teamRes.Teams {
+        for _, m := range team.Members {
+
+            u := m.User
+            users = append(users, ClickUpUser{
+                ID:       u.ID,
+                Username: u.Username,
+                Email:    u.Email,
+                Color:    "",          
+                Role:     u.RoleKey,
+            })
+        }
+    }
+
+    return users, nil
+}

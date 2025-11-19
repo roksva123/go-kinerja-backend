@@ -22,6 +22,7 @@ type PostgresRepo struct {
 	DB *sql.DB
 }
 
+
 func NewPostgresRepo(cfg *DBConfig) (*PostgresRepo, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",

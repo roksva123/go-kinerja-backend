@@ -17,8 +17,9 @@ type User struct {
 }
 
 type ClickUpUser struct {
-    ID       string `json:"id"`
+    ID       int    `json:"id"`
     Username string `json:"username"`
     Email    string `json:"email"`
     Color    string `json:"color"`
+    Role     string `json:"role"`
 }

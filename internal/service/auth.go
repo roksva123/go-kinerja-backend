@@ -1,14 +1,14 @@
 package service
 
 import (
-    "errors"
-    "time"
+	"errors"
+	"time"
 
-    "github.com/golang-jwt/jwt/v5"
-    "golang.org/x/crypto/bcrypt"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 
-    "github.com/roksva123/go-kinerja-backend/internal/model"
-    "github.com/roksva123/go-kinerja-backend/internal/repository"
+	"github.com/roksva123/go-kinerja-backend/internal/model"
+	"github.com/roksva123/go-kinerja-backend/internal/repository"
 )
 
 type AuthService struct {

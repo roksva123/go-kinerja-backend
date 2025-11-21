@@ -31,11 +31,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
-    username VARCHAR(100) UNIQUE NOT NULL,
-    full_name VARCHAR(255),
+    clickup_id VARCHAR(50) UNIQUE,
+    username VARCHAR(255),
     email VARCHAR(255),
-    password TEXT NOT NULL,
-    clickup_id VARCHAR(100),
+    password TEXT,
+    role VARCHAR(50) DEFAULT 'employee',
+    team_id VARCHAR(50),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

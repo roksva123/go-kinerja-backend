@@ -42,7 +42,7 @@ func Load() (*Config, error) {
 		Port:   getEnv("PORT", "8001"),
 
 		// DB
-		DBHost: getEnv("DB_HOST", "127.0.0.1"),
+		DBHost: getEnv("DB_HOST", "db.fsufakerljrkzrlrjiwm.supabase.co"),
 		DBPort: getEnv("DB_PORT", "5432"),
 		DBUser: getEnv("DB_USER", "postgres"),
 		DBPass: getEnv("DB_PASS", "aufa"),
@@ -69,7 +69,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// getEnv returns environment variable or default value.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -77,7 +76,6 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvFloat returns float from env or default.
 func getEnvFloat(key string, defaultValue float64) float64 {
 	if value := os.Getenv(key); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {

@@ -184,13 +184,11 @@ func (s *ClickUpService) GetTeams(ctx context.Context) ([]model.Team, error) {
 	return s.Repo.GetTeams(ctx)
 }
 
-
-
 func (s *ClickUpService) GetMembers(ctx context.Context) ([]model.User, error) {
-    return s.Repo.GetUsers(ctx)
+	return s.Repo.GetUsers(ctx)
 }
-
 
 func (s *ClickUpService) GetTasks(ctx context.Context) ([]model.Task, error) {
-    return s.Repo.GetTasks(ctx)
+	return s.Repo.GetTasks(ctx)
 }
+

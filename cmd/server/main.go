@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/roksva123/go-kinerja-backend/internal/api/handlers"
@@ -29,8 +31,10 @@ func main() {
 	fmt.Println("TOKEN LENGTH:", len(cfg.ClickUpToken))
 	fmt.Println("==================================")
 
+
 	// INIT DB
 	repo := repository.NewPostgresRepo()
+	
 
 	// MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
@@ -55,6 +59,14 @@ func main() {
 
 	// ROUTER
 	r := gin.Default()
+    r.Use(cors.New(cors.Config{
+    AllowOrigins:     []string{"*"},
+    AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+    AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+    ExposeHeaders:    []string{"Content-Length"},
+    AllowCredentials: true,
+    MaxAge: 12 * time.Hour,
+    }))
 	api := r.Group("/api/v1")
 
 	// CLICKUP ROUTES

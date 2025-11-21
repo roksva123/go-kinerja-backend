@@ -1,7 +1,12 @@
 package model
 
+import "time"
+
 type Team struct {
-    TeamID   string `db:"team_id" json:"team_id"`
-    Name     string `db:"name" json:"name"`
-    ParentID string `db:"parent_id" json:"parent_id"`
+    ID        string    `json:"id"`        
+    Name      string    `json:"name"`
+    ParentID  *string   `json:"parent_id"` 
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
 }
+

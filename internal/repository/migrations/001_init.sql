@@ -30,10 +30,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT PRIMARY KEY,
-    username TEXT NOT NULL,
-    name TEXT NOT NULL,
-    role TEXT NOT NULL,
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    full_name VARCHAR(255),
+    email VARCHAR(255),
+    password TEXT NOT NULL,
+    clickup_id VARCHAR(100),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -96,4 +98,11 @@ CREATE TABLE IF NOT EXISTS performance_reviews (
   score NUMERIC,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );

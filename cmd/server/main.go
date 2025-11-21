@@ -16,36 +16,28 @@ import (
 
 func main() {
 
-	// 1. LOAD ENV
+	// LOAD ENV
 	_ = godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("failed load config:", err)
 	}
 
-    fmt.Println("==================================")
-    fmt.Println("CLICKUP TOKEN RAW:", cfg.ClickUpToken)
-    fmt.Println("TOKEN LENGTH:", len(cfg.ClickUpToken))
-    fmt.Println("==================================")
+	// DEBUG TOKEN
+	fmt.Println("==================================")
+	fmt.Println("CLICKUP TOKEN RAW:", cfg.ClickUpToken)
+	fmt.Println("TOKEN LENGTH:", len(cfg.ClickUpToken))
+	fmt.Println("==================================")
 
-	// 2. INIT DATABASE
-	repo, err := repository.NewPostgresRepo(&repository.DBConfig{
-		Host: cfg.DBHost,
-		Port: cfg.DBPort,
-		User: cfg.DBUser,
-		Pass: cfg.DBPass,
-		Name: cfg.DBName,
-	})
-	if err != nil {
-		log.Fatal("failed connect db:", err)
-	}
+	// INIT DB
+	repo := repository.NewPostgresRepo()
 
-	// 3. RUN MIGRATIONS
+	// MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
 		log.Fatal("migration error:", err)
 	}
 
-	// 4. SEED ADMIN
+	// ADMIN SEED
 	hashed, _ := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
 	if err := repo.UpsertAdmin(context.Background(), cfg.AdminUsername, string(hashed)); err != nil {
 		log.Println("failed seeding admin:", err)
@@ -53,39 +45,39 @@ func main() {
 		log.Println("admin seeded OK")
 	}
 
-	// 5. INIT SERVICES
+	// SERVICES
 	clickService := service.NewClickUpService(repo, cfg.ClickUpToken, cfg.ClickUpTeamID)
 
-	// 6. INIT HANDLERS
+	// HANDLERS
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 	employeeHandler := handlers.NewEmployeeHandler(repo, clickService, cfg)
-
-	// **INI YANG KAMU LUPA**
 	clickupHandler := handlers.NewClickUpHandler(clickService)
 
-	// 7. SETUP ROUTER
+	// ROUTER
 	r := gin.Default()
 	api := r.Group("/api/v1")
 
-	// ----- CLICKUP -----
-	click := api.Group("/clickup")
+	// CLICKUP ROUTES
+	clickup := api.Group("/clickup")
     {
-        click.POST("/sync/members", clickupHandler.SyncMembers)
-		r.POST("/api/v1/clickup/sync/team", clickupHandler.SyncTeam)
-        click.POST("/sync/tasks", clickupHandler.SyncTasks)
+        clickup.POST("/sync/team", clickupHandler.SyncTeam)
+        clickup.POST("/sync/members", clickupHandler.SyncMembers)
+        clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
+    
+        clickup.GET("/teams", clickupHandler.GetTeams)
+        clickup.GET("/members", clickupHandler.GetMembers)
+        clickup.GET("/tasks", clickupHandler.GetTasks)
     }
 
-
-	// ----- AUTH -----
+	// AUTH ROUTES
 	auth := api.Group("/auth")
 	{
 		auth.POST("/login", authHandler.Login)
 	}
 
-	// ----- SYNC CLICKUP -----
+	// EMPLOYEE + SYNC CLICKUP ROUTES
 	api.POST("/sync/clickup", employeeHandler.SyncClickUp)
 
-	// ----- EMPLOYEES -----
 	emp := api.Group("/employees")
 	{
 		emp.GET("", employeeHandler.ListEmployees)
@@ -95,7 +87,7 @@ func main() {
 		emp.GET("/:id/schedule", employeeHandler.GetEmployeeSchedule)
 	}
 
-	// 8. START SERVER
+	// START SERVER
 	log.Println("Server running on port:", cfg.Port)
 	r.Run(":" + cfg.Port)
 }

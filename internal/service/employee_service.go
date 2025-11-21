@@ -19,7 +19,7 @@ func (s *EmployeeService) SyncEmployee(user model.User) error {
 
 	emp := model.Employee{
 		ID:       strconv.FormatInt(user.ID, 10), // FIX DI SINI
-		Username: user.Username,
+		Name: user.Name,
 		Email:    user.Email,
 		Color:    "", 
 	}

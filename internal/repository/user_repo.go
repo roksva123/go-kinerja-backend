@@ -45,3 +45,4 @@ func (r *userRepo) UpsertUser(ctx context.Context, u *model.User) error {
 	_, err := r.db.ExecContext(ctx, query, u.ID, u.Username, u.Name, u.Role)
 	return err
 }
+

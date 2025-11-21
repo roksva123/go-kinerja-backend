@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"os"
 
 	_ "github.com/lib/pq"
 	"github.com/roksva123/go-kinerja-backend/internal/model"
@@ -22,23 +23,31 @@ type PostgresRepo struct {
 	DB *sql.DB
 }
 
+type Repository interface {
+    UpsertTeam(ctx context.Context, id string, name string) error
+}
 
-func NewPostgresRepo(cfg *DBConfig) (*PostgresRepo, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		cfg.Host, cfg.Port, cfg.User, cfg.Pass, cfg.Name,
-	)
+
+
+func NewPostgresRepo() *PostgresRepo {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "host=localhost port=5432 user=postgres password=aufa dbname=kinerja_db sslmode=disable"
+	}
+
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	// ping
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		return nil, err
+
+	// verify connection
+	if err := db.Ping(); err != nil {
+		panic(err)
 	}
-	return &PostgresRepo{DB: db}, nil
+
+	return &PostgresRepo{
+		DB: db,
+	}
 }
 
 func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
@@ -77,6 +86,13 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
 			updated_at TIMESTAMP WITH TIME ZONE
 		);`,
+		`CREATE TABLE IF NOT EXISTS teams (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+        );`,
+
 	}
 	for _, q := range queries {
 		if _, err := r.DB.ExecContext(ctx, q); err != nil {
@@ -245,8 +261,8 @@ func (r *PostgresRepo) ListTasksByEmployee(ctx context.Context, employeeID strin
 
 func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
     query := `
-        INSERT INTO users (id, username, name, role)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO users (id, username, name, role, password)
+        VALUES ($1, $2, $3, $4, COALESCE($5, 'default-password'))
         ON CONFLICT (id) DO UPDATE SET
             username = EXCLUDED.username,
             name = EXCLUDED.name,
@@ -254,13 +270,11 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
             updated_at = NOW();
     `
     _, err := r.DB.ExecContext(ctx, query,
-        u.ID,
-        u.Username,
-        u.Name,
-        u.Role,
+        u.ID, u.Username, u.Name, u.Role, u.Password,
     )
     return err
 }
+
 
 func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) {
     query := `SELECT id, username, name, role, created_at, updated_at FROM users ORDER BY id`
@@ -287,3 +301,105 @@ func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) {
 }
 
 
+
+func (r *PostgresRepo) UpsertTeam(ctx context.Context, id, name, parentID string) error {
+	_, err := r.DB.ExecContext(ctx,
+		`INSERT INTO teams (team_id, name, parent_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (team_id)
+		 DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id`,
+		id, name, parentID,
+	)
+	return err
+}
+
+
+
+
+
+func (r *PostgresRepo) UpsertEmployee(ctx context.Context, emp *model.Employee) error {
+	_, err := r.DB.ExecContext(ctx, `
+		INSERT INTO employees (id, fullname, email, role, team_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT(id) DO UPDATE SET
+			fullname = EXCLUDED.name,
+			email = EXCLUDED.email,
+			role = EXCLUDED.role,
+			team_id = EXCLUDED.team_id,
+			updated_at = NOW()
+	`,
+		emp.ID,
+		emp.Name,
+		emp.Email,
+		emp.Role,
+		emp.ID,
+	)
+
+	return err
+}
+func (r *PostgresRepo) GetTeams(ctx context.Context) ([]model.Team, error) {
+	rows, err := r.DB.QueryContext(ctx, `SELECT team_id, name, parent_id FROM teams`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var teams []model.Team
+
+	for rows.Next() {
+		var t model.Team
+		err := rows.Scan(&t.TeamID, &t.Name, &t.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		teams = append(teams, t)
+	}
+
+	return teams, nil
+}
+
+
+
+func (r *PostgresRepo) GetUsers(ctx context.Context) ([]model.User, error) {
+    rows, err := r.DB.QueryContext(ctx,
+        `SELECT id, username, name, role FROM users ORDER BY name`)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var users []model.User
+
+    for rows.Next() {
+        var u model.User
+        err := rows.Scan(&u.ID, &u.Username, &u.Name, &u.Role)
+        if err != nil {
+            return nil, err
+        }
+        users = append(users, u)
+    }
+
+    return users, nil
+}
+
+func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.Task, error) {
+    rows, err := r.DB.QueryContext(ctx,
+        `SELECT id, name, status, assignee_id, due_date FROM tasks ORDER BY due_date`)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var tasks []model.Task
+
+    for rows.Next() {
+        var t model.Task
+        err := rows.Scan(&t.ID, &t.Name, &t.Status, &t.AssigneeID, &t.DueDate)
+        if err != nil {
+            return nil, err
+        }
+        tasks = append(tasks, t)
+    }
+
+    return tasks, nil
+}

@@ -34,7 +34,7 @@ func main() {
 
 	// INIT DB
 	repo := repository.NewPostgresRepo()
-	
+
 
 	// MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
@@ -67,6 +67,7 @@ func main() {
     AllowCredentials: true,
     MaxAge: 12 * time.Hour,
     }))
+	r.Static("/images", "public/images")
 	api := r.Group("/api/v1")
 
 	// CLICKUP ROUTES

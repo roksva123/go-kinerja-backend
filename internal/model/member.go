@@ -10,6 +10,7 @@ type Member struct {
     Email     string    `json:"email"`
     Color     string    `json:"color"`
     TeamID    string    `json:"team_id"`
+	Photo     string    `json:"photo"`
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
 }

@@ -3,6 +3,7 @@ package handlers
 import (
     "net/http"
 
+    "fmt"
     "github.com/gin-gonic/gin"
     "github.com/roksva123/go-kinerja-backend/internal/model"
     "github.com/roksva123/go-kinerja-backend/internal/service"
@@ -73,11 +74,17 @@ func (h *ClickUpHandler) GetTeams(c *gin.Context) {
 
 func (h *ClickUpHandler) GetMembers(c *gin.Context) {
     members, err := h.Click.GetMembers(c)
+    
     if err != nil {
         c.JSON(500, gin.H{"error": err.Error()})
         return
     }
 
+    // memberResponse := []model.User
+
+    for i := range members {
+        members[i].Photo = "/images/" + fmt.Sprintf("%d", members[i].ID) + ".jpg"
+    }
     c.JSON(200, members)
 }
 

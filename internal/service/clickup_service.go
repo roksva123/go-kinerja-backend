@@ -76,46 +76,43 @@ func (s *ClickUpService) SyncTeam(ctx context.Context) error {
 
 // SyncMembers -> fetch team members and upsert to users
 func (s *ClickUpService) SyncMembers(ctx context.Context) error {
-    if s.TeamID == "" {
-        return errors.New("team id not configured")
-    }
-    url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/member", s.TeamID)
+    url := "https://api.clickup.com/api/v2/user"
+
     b, err := s.doRequest(ctx, "GET", url)
     if err != nil {
         return err
     }
+
+    // Struktur response ClickUp untuk endpoint /user
     var out struct {
-        Members []struct {
-            User struct {
-                ID       int64  `json:"id"`
-                Username string `json:"username"`
-                Email    string `json:"email"`
-                Color    string `json:"color"`
-                Email2   string `json:"email"` 
-                Username2 string `json:"username"`
-                // etc
-            } `json:"user"`
-        } `json:"members"`
+        User struct {
+            ID       int64  `json:"id"`
+            Username string `json:"username"`
+            Email    string `json:"email"`
+            Color    string `json:"color"`
+        } `json:"user"`
     }
+
     if err := json.Unmarshal(b, &out); err != nil {
         return err
     }
-    for _, m := range out.Members {
-        u := &model.User{
-            ID:      m.User.ID,
-            ClickUpID: m.User.ID,
-            Username: m.User.Username,
-            Name:    m.User.Username,
-            Email:   m.User.Email,
-            Role:    "employee",
-            Color:   m.User.Color,
-        }
-        if err := s.Repo.UpsertUser(ctx, u); err != nil {
-           fmt.Println("ERROR UPSERT USER:", err)
-           return err
-        }
 
+    // Mapping ke model kamu
+    u := &model.User{
+        ID:        out.User.ID,
+        ClickUpID: out.User.ID,
+        Username:  out.User.Username,
+        Name:      out.User.Username,
+        Email:     out.User.Email,
+        Role:      "employee",
+        Color:     out.User.Color,
     }
+
+    if err := s.Repo.UpsertUser(ctx, u); err != nil {
+        fmt.Println("ERROR UPSERT USER:", err)
+        return err
+    }
+
     return nil
 }
 

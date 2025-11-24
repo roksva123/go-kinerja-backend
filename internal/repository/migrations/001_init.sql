@@ -1,60 +1,18 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-CREATE TABLE IF NOT EXISTS admins (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  username VARCHAR(100) UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS employees (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  fullname TEXT NOT NULL,
-  email TEXT,
-  clickup_user_id TEXT,
-  position TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS teams (
+  team_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
-  project_id TEXT,
-  status TEXT,
-  time_estimate_seconds BIGINT,
-  time_spent_seconds BIGINT,
-  percent_complete NUMERIC,
-  start_date TIMESTAMP,
-  due_date TIMESTAMP
+  parent_id TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    clickup_id VARCHAR(50) UNIQUE,
-    username VARCHAR(255),
-    email VARCHAR(255),
-    password TEXT,
-    role VARCHAR(50) DEFAULT 'employee',
-    team_id VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-CREATE TABLE IF NOT EXISTS admins (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  username VARCHAR(100) UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS users (
-  id BIGINT PRIMARY KEY, -- ClickUp user id
-  username TEXT NOT NULL,
+  id BIGINT PRIMARY KEY, 
+  username TEXT,
   name TEXT,
+  password TEXT, 
   email TEXT,
   role TEXT,
   color TEXT,
@@ -62,48 +20,34 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS projects (
-  id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS members (
+  id BIGSERIAL PRIMARY KEY,
+  clickup_id TEXT UNIQUE,
+  username TEXT,
   name TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+  email TEXT,
+  color TEXT,
+  team_id TEXT REFERENCES teams(team_id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   name TEXT,
-  employee_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-  status VARCHAR(50),
-  time_estimate_seconds BIGINT,
-  time_spent_seconds BIGINT,
-  percent_complete NUMERIC,
-  start_date TIMESTAMPTZ,
-  due_date TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ
-);
-
-CREATE TABLE IF NOT EXISTS attendance (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id BIGINT REFERENCES users(id),
-  checkin_at TIMESTAMPTZ,
-  checkout_at TIMESTAMPTZ,
-  date DATE,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS performance_reviews (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id BIGINT REFERENCES users(id),
-  reviewer TEXT,
-  score NUMERIC,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS teams (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+  text_content TEXT,
+  description TEXT,
+  status_id TEXT,
+  status_name TEXT,
+  status_type TEXT,
+  status_color TEXT,
+  date_done BIGINT,    
+  date_closed BIGINT,  
+  assignee_clickup_id TEXT, 
+  assignee_user_id BIGINT,  
+  assignee_username TEXT,
+  assignee_email TEXT,
+  assignee_color TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );

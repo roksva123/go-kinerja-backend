@@ -21,6 +21,9 @@ type Config struct {
 	JWTSecret string
 	ClickUpToken string
 	ClickUpTeamID string
+	ClickUpSpaceID string
+	ClickUpFolderID string
+	ClickUpListID string
 
 	// Admin login
 	AdminUsername string
@@ -54,6 +57,9 @@ func Load() (*Config, error) {
 		// ClickUp
 		ClickUpToken: getEnv("CLICKUP_TOKEN", "pk_101582122_8YV9NZHLPHQ75C9TWGM4RHB0U9MZJ2C2"),
 		ClickUpTeamID: getEnv("CLICKUP_TEAM_ID", "90181837104"),
+		ClickUpSpaceID: getEnv("CLICKUP_SPACE_ID", "90187211964"),
+		ClickUpFolderID: getEnv("CLICKUP_FOLDER_ID", "90189201519"),
+		ClickUpListID: getEnv("CLICKUP_LIST_ID", "90189201519"),
 
 		// Admin login
 		AdminUsername: getEnv("ADMIN_USERNAME", "admin"),

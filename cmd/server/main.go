@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"os"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -29,6 +30,7 @@ func main() {
 	fmt.Println("==================================")
 	fmt.Println("CLICKUP TOKEN RAW:", cfg.ClickUpToken)
 	fmt.Println("TOKEN LENGTH:", len(cfg.ClickUpToken))
+	fmt.Println("DSN:", os.Getenv("DB_URL"))
 	fmt.Println("==================================")
 
 
@@ -54,7 +56,6 @@ func main() {
 
 	// HANDLERS
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
-	employeeHandler := handlers.NewEmployeeHandler(repo, clickService, cfg)
 	clickupHandler := handlers.NewClickUpHandler(clickService)
 
 	// ROUTER
@@ -86,18 +87,6 @@ func main() {
 	auth := api.Group("/auth")
 	{
 		auth.POST("/login", authHandler.Login)
-	}
-
-	// EMPLOYEE + SYNC CLICKUP ROUTES
-	api.POST("/sync/clickup", employeeHandler.SyncClickUp)
-
-	emp := api.Group("/employees")
-	{
-		emp.GET("", employeeHandler.ListEmployees)
-		emp.GET("/:id", employeeHandler.GetEmployee)
-		emp.GET("/:id/tasks", employeeHandler.GetEmployeeTasks)
-		emp.GET("/:id/performance", employeeHandler.GetEmployeePerformance)
-		emp.GET("/:id/schedule", employeeHandler.GetEmployeeSchedule)
 	}
 
 	// START SERVER

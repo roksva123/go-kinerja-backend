@@ -23,7 +23,7 @@ func (r *userRepo) GetByUsername(username string) (*model.User, error) {
     user := &model.User{}
     query := `SELECT id, username, password, name, role, created_at, updated_at FROM users WHERE username=$1`
     err := r.db.QueryRow(query, username).Scan(
-        &user.ID, &user.Username, &user.Password,
+        &user.ID, &user.Username, &user.PasswordHash,
         &user.Name, &user.Role,
         &user.CreatedAt, &user.UpdatedAt,
     )

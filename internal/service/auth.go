@@ -26,7 +26,7 @@ func (s *AuthService) Login(username, password string) (string, *model.User, err
         return "", nil, errors.New("invalid credentials")
     }
 
-    if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)) != nil {
+    if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
         return "", nil, errors.New("invalid credentials")
     }
 

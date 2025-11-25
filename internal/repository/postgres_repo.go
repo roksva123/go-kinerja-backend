@@ -1,14 +1,14 @@
 package repository
 
 import (
-    "context"
-    "database/sql"
-    "time"
-    "fmt"
-    "os"
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"time"
 
-    _ "github.com/lib/pq"
-    "github.com/roksva123/go-kinerja-backend/internal/model"
+	_ "github.com/lib/pq"
+	"github.com/roksva123/go-kinerja-backend/internal/model"
 )
 
 type DBConfig struct {
@@ -177,7 +177,7 @@ func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) {
     for rows.Next() {
         var u model.User
         if err := rows.Scan(
-            &u.ID, &u.Username, &u.Name, &u.Role,
+            &u.ID, &u.DisplayName, &u.Name, &u.Role,
             &u.CreatedAt, &u.UpdatedAt,
         ); err != nil {
             return nil, err
@@ -224,7 +224,7 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
             updated_at = now()
     `,
         u.ClickUpID,
-        u.Username,
+        u.DisplayName,
         u.Name,
         u.Email,
         u.PasswordHash,
@@ -293,13 +293,24 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
 // GetTasks -> returns TaskResponse slice
 func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, error) {
     q := `
-    SELECT id,name,text_content,description,
-           status_id,status_name,status_type,status_color,
-           date_done,date_closed,
-           assignee_username,assignee_email,assignee_color
-    FROM tasks
-    ORDER BY COALESCE(date_done,0) DESC NULLS LAST
+        SELECT 
+            COALESCE(task_id, id) AS id,
+            name,
+            text_content,
+            description,
+            status_id,
+            status_name,
+            status_type,
+            status_color,
+            date_done,
+            date_closed,
+            assignee_username,
+            assignee_email,
+            assignee_color
+        FROM tasks
+        ORDER BY COALESCE(date_done, 0) DESC
     `
+
     rows, err := r.DB.QueryContext(ctx, q)
     if err != nil {
         return nil, err
@@ -307,20 +318,31 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
     defer rows.Close()
 
     out := []model.TaskResponse{}
+
     for rows.Next() {
+
         var t model.TaskResponse
-        var statusID, statusName, statusType, statusColor sql.NullString
-        var dateDone, dateClosed sql.NullInt64
-        var uname, uemail, ucolor sql.NullString
+
+        var (
+            statusID, statusName, statusType, statusColor sql.NullString
+            dateDone, dateClosed sql.NullInt64
+            uname, uemail, ucolor sql.NullString
+        )
 
         if err := rows.Scan(
             &t.ID,
             &t.Name,
             &t.TextContent,
             &t.Description,
-            &statusID, &statusName, &statusType, &statusColor,
-            &dateDone, &dateClosed,
-            &uname, &uemail, &ucolor,
+            &statusID,
+            &statusName,
+            &statusType,
+            &statusColor,
+            &dateDone,
+            &dateClosed,
+            &uname,
+            &uemail,
+            &ucolor,
         ); err != nil {
             return nil, err
         }
@@ -334,10 +356,12 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
             v := dateDone.Int64
             t.DateDone = &v
         }
+
         if dateClosed.Valid {
             v := dateClosed.Int64
             t.DateClosed = &v
         }
+
         if uname.Valid {
             t.Username = uname.String
         }
@@ -350,8 +374,10 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
 
         out = append(out, t)
     }
+
     return out, nil
 }
+
 
 // GetMembers
 func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
@@ -364,7 +390,7 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     var out []model.User
     for rows.Next() {
         var u model.User
-        if err := rows.Scan(&u.ID, &u.Username, &u.Name, &u.Email, &u.Role, &u.Color, &u.CreatedAt, &u.UpdatedAt); err != nil {
+        if err := rows.Scan(&u.ID, &u.DisplayName, &u.Name, &u.Email, &u.Role, &u.Color, &u.CreatedAt, &u.UpdatedAt); err != nil {
             return nil, err
         }
         out = append(out, u)
@@ -392,5 +418,79 @@ func (r *PostgresRepo) GetTeams(ctx context.Context) ([]model.Team, error) {
         }
         out = append(out, t)
     }
+    return out, nil
+}
+
+// GetFullSyncFiltered returns FullSync filtered using date range and role
+func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int64, role string) ([]model.TaskWithMember, error) {
+
+    q := `
+        SELECT 
+            t.id, t.name, t.status, t.date_created, t.date_done, t.date_closed,
+            m.id, m.username, m.email, m.role, m.color
+        FROM tasks t
+        LEFT JOIN members m ON (t.username = m.username OR t.email = m.email)
+        WHERE 1=1
+    `
+
+    args := []interface{}{}
+    idx := 1
+
+    // filter tanggal
+    if start != nil && end != nil {
+        q += fmt.Sprintf(`
+            AND (
+                (t.date_created IS NOT NULL AND t.date_created BETWEEN $%d AND $%d) OR
+                (t.date_done IS NOT NULL AND t.date_done BETWEEN $%d AND $%d) OR
+                (t.date_closed IS NOT NULL AND t.date_closed BETWEEN $%d AND $%d)
+            )
+        `, idx, idx+1, idx, idx+1, idx, idx+1)
+
+        args = append(args, *start, *end)
+        idx += 2
+    }
+
+    // filter role karyawan
+    if role != "" {
+        q += fmt.Sprintf(" AND m.role = $%d ", idx)
+        args = append(args, role)
+        idx++
+    }
+
+    q += " ORDER BY t.date_created DESC "
+
+    rows, err := r.DB.QueryContext(ctx, q, args...)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var out []model.TaskWithMember
+
+    for rows.Next() {
+        var t model.TaskWithMember
+        var mID sql.NullInt64
+        var mU, mE, mR, mC sql.NullString
+
+        err := rows.Scan(
+            &t.TaskID, &t.TaskName, &t.TaskStatus,
+            &t.DateCreated, &t.DateDone, &t.DateClosed,
+            &mID, &mU, &mE, &mR, &mC,
+        )
+        if err != nil {
+            return nil, err
+        }
+
+        if mID.Valid {
+            t.UserID = mID.Int64
+            t.Username = mU.String
+            t.Email = mE.String
+            t.Role = mR.String
+            t.Color = mC.String
+        }
+
+        out = append(out, t)
+    }
+
     return out, nil
 }

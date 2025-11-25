@@ -5,7 +5,7 @@ import "time"
 type Member struct {
     ID          string    `json:"id"`               
     ClickUpID   int64     `json:"clickup_id"`       
-    Username    string    `json:"username"`
+    DisplayName    string    `json:"username"`
     Email       string    `json:"email"`
     Color       string    `json:"color"`
     Photo       string    `json:"photo"`

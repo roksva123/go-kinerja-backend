@@ -101,7 +101,7 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
     u := &model.User{
         ID:        out.User.ID,
         ClickUpID: out.User.ID,
-        Username:  out.User.Username,
+        DisplayName:  out.User.Username,
         Name:      out.User.Username,
         Email:     out.User.Email,
         Role:      "employee",
@@ -222,6 +222,56 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
     return total, nil
 }
 
+func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error) {
+
+    members, err := s.Repo.GetMembers(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    tasks, err := s.Repo.GetTasks(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    var out []model.FullSync
+
+    for _, t := range tasks {
+        // cari user yang match dengan t.Username atau email
+        var matchedMember *model.User
+
+        for _, m := range members {
+        if m.DisplayName == t.Username || m.Email == t.Email {
+            matchedMember = &m
+            break
+            }
+        }
+
+
+        fs := model.FullSync{
+            TaskID:      t.ID,
+            TaskName:    t.Name,
+            TaskStatus:  t.Status.Name,
+            DateCreated: t.DateClosed,
+            DateDone:    t.DateDone,
+            AssignedTo:  t.Username,
+        }
+
+        if matchedMember != nil {
+            fs.UserID = matchedMember.ID
+            fs.DisplayName = matchedMember.DisplayName
+            fs.Email = matchedMember.Email
+            fs.Role = matchedMember.Role
+            fs.Color = matchedMember.Color
+        }
+
+        out = append(out, fs)
+    }
+
+    return out, nil
+}
+
+
 func (s *ClickUpService) GetTasks(ctx context.Context) ([]model.TaskResponse, error) {
     return s.Repo.GetTasks(ctx)
 }
@@ -233,3 +283,72 @@ func (s *ClickUpService) GetMembers(ctx context.Context) ([]model.User, error) {
 func (s *ClickUpService) GetTeams(ctx context.Context) ([]model.Team, error) {
     return s.Repo.GetTeams(ctx)
 }
+
+func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.FullSyncFilter) ([]model.FullSync, error) {
+
+    // RANGE otomatis (last_6_months, next_6_months)
+    now := time.Now()
+
+    if filter.Range == "last_6_months" {
+        end := now.UnixMilli()
+        start := now.AddDate(0, -6, 0).UnixMilli()
+        filter.StartDate = &start
+        filter.EndDate = &end
+    }
+
+    if filter.Range == "next_6_months" {
+        start := now.UnixMilli()
+        end := now.AddDate(0, 6, 0).UnixMilli()
+        filter.StartDate = &start
+        filter.EndDate = &end
+    }
+
+    // Ambil dari repo
+    data, err := s.Repo.GetFullSyncFiltered(ctx, filter.StartDate, filter.EndDate, filter.Role)
+    if err != nil {
+        return nil, err
+    }
+
+    if len(data) == 0 {
+        return nil, errors.New("Tidak ada task pada rentang tanggal yang dipilih")
+    }
+
+    var out []model.FullSync
+
+    for _, t := range data {
+
+        // convert milliseconds -> jam
+        convert := func(ms *int64) float64 {
+            if ms == nil {
+                return 0
+            }
+            return float64(*ms) / 1000 / 60 / 60
+        }
+
+        fs := model.FullSync{
+            TaskID:     t.TaskID,
+            TaskName:   t.TaskName,
+            TaskStatus: t.TaskStatus,
+
+            DateCreated: t.DateCreated,
+            DateDone:    t.DateDone,
+            DateClosed:  t.DateClosed,
+
+            HoursCreated: convert(t.DateCreated),
+            HoursDone:    convert(t.DateDone),
+            HoursClosed:  convert(t.DateClosed),
+
+            UserID:   t.UserID,
+            DisplayName: t.Username,
+            Email:    t.Email,
+            Role:     t.Role,
+            Color:    t.Color,
+        }
+
+        out = append(out, fs)
+    }
+
+    return out, nil
+}
+
+

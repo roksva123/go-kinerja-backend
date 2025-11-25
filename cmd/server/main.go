@@ -38,6 +38,7 @@ func main() {
 	repo := repository.NewPostgresRepo()
 
 
+
 	// MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
 		log.Fatal("migration error:", err)
@@ -57,6 +58,7 @@ func main() {
 	// HANDLERS
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 	clickupHandler := handlers.NewClickUpHandler(clickService)
+
 
 	// ROUTER
 	r := gin.Default()
@@ -81,7 +83,13 @@ func main() {
         clickup.GET("/teams", clickupHandler.GetTeams)
         clickup.GET("/members", clickupHandler.GetMembers)
         clickup.GET("/tasks", clickupHandler.GetTasks)
+		clickup.GET("/fullsync", clickupHandler.GetFullSync)
+		clickup.GET("/fullsync/filter", clickupHandler.GetFullSync)
+
     }
+
+
+
 
 	// AUTH ROUTES
 	auth := api.Group("/auth")

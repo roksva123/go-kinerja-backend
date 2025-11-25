@@ -1,3 +1,4 @@
+
 package service
 
 import (
@@ -350,5 +351,3 @@ func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.Full
 
     return out, nil
 }
-
-

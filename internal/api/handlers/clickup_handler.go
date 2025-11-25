@@ -81,38 +81,36 @@ func (h *ClickUpHandler) GetFullSync(c *gin.Context) {
 
 
 func (h *ClickUpHandler) GetFullSyncFiltered(c *gin.Context) {
+	var filter model.FullSyncFilter
 
-    filter := model.FullSyncFilter{}
+	// role
+	filter.Role = c.Query("role")
 
-    // optional role
-    filter.Role = c.Query("role")
+	// range param
+	filter.Range = c.Query("range")
 
-    // optional range
-    filter.Range = c.Query("range")
+	// custom start/end (priority)
+	startStr := c.Query("start_date")
+	endStr := c.Query("end_date")
+	if startStr != "" && endStr != "" {
+		layout := "2006-01-02"
+		if sd, err := time.Parse(layout, startStr); err == nil {
+			ms := sd.UnixNano() / int64(1e6)
+			filter.StartDate = &ms
+		}
+		if ed, err := time.Parse(layout, endStr); err == nil {
+			// end of day -> include full day
+			ed = ed.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			ms := ed.UnixNano() / int64(1e6)
+			filter.EndDate = &ms
+		}
+	}
 
-    // custom start_date & end_date (prioritas)
-    startStr := c.Query("start_date")
-    endStr := c.Query("end_date")
-
-    if startStr != "" && endStr != "" {
-        start, err := time.Parse("2006-01-02", startStr)
-        if err == nil {
-            ms := start.UnixMilli()
-            filter.StartDate = &ms
-        }
-        end, err := time.Parse("2006-01-02", endStr)
-        if err == nil {
-            ms := end.UnixMilli()
-            filter.EndDate = &ms
-        }
-    }
-
-    // CALL service
-    data, err := h.Click.FullSyncFiltered(c.Request.Context(), filter)
-    if err != nil {
-        c.JSON(404, gin.H{"message": err.Error()})
-        return
-    }
-
-    c.JSON(200, data)
+	// call service
+	out, err := h.Click.FullSyncFiltered(c.Request.Context(), filter)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tasks": out})
 }

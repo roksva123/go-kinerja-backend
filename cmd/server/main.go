@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
-	"os"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -27,11 +25,7 @@ func main() {
 	}
 
 	// DEBUG TOKEN
-	fmt.Println("==================================")
-	fmt.Println("CLICKUP TOKEN RAW:", cfg.ClickUpToken)
-	fmt.Println("TOKEN LENGTH:", len(cfg.ClickUpToken))
-	fmt.Println("DSN:", os.Getenv("DB_URL"))
-	fmt.Println("==================================")
+
 
 
 	// INIT DB
@@ -58,6 +52,8 @@ func main() {
 	// HANDLERS
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 	clickupHandler := handlers.NewClickUpHandler(clickService)
+	workloadSvc := service.NewWorkloadService(repo)
+    workloadHandler := handlers.NewWorkloadHandler(workloadSvc, clickService)
 
 
 	// ROUTER
@@ -89,8 +85,11 @@ func main() {
     }
 
 
-
-
+    work := api.Group("/workload")
+    {
+        work.GET("", workloadHandler.GetWorkload)   
+        work.POST("/sync", workloadHandler.SyncAll) 
+    }
 	// AUTH ROUTES
 	auth := api.Group("/auth")
 	{

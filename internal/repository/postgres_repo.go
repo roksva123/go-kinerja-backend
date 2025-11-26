@@ -494,3 +494,98 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
 
     return out, nil
 }
+
+func (r *PostgresRepo) GetTasksByRange(ctx context.Context, fromTs, toTs *int64, positionTag, source, nameFilter string) ([]model.TaskResponse, error) {
+	// We'll select fields that we stored in tasks table. Adjust column names as your schema.
+	q := `SELECT id, name, text_content, description, status_name, date_done, date_closed, assignee_username, assignee_email, assignee_color, time_estimate, time_spent
+	      FROM tasks
+	      WHERE 1=1`
+	args := []interface{}{}
+	idx := 1
+
+	if fromTs != nil {
+		q += fmt.Sprintf(" AND (date_closed IS NOT NULL AND date_closed >= $%d) OR (date_done IS NOT NULL AND date_done >= $%d)", idx, idx)
+		args = append(args, *fromTs)
+		idx++
+	}
+	if toTs != nil {
+		q += fmt.Sprintf(" AND (date_closed IS NOT NULL AND date_closed <= $%d) OR (date_done IS NOT NULL AND date_done <= $%d)", idx, idx)
+		args = append(args, *toTs)
+		idx++
+	}
+
+	// filter by positionTag (we saved tags into tasks or have member tags)
+	if positionTag != "" {
+		q += fmt.Sprintf(" AND ( EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id AND tt.tag = $%d) )", idx)
+		args = append(args, positionTag)
+		idx++
+	}
+
+	// source filter - if you stored project/source field
+	if source != "" {
+		q += fmt.Sprintf(" AND (project_name = $%d OR source = $%d)", idx, idx)
+		args = append(args, source)
+		idx++
+	}
+
+	if nameFilter != "" {
+		q += fmt.Sprintf(" AND (assignee_username ILIKE $%d OR assignee_email ILIKE $%d)", idx, idx+1)
+		args = append(args, "%"+nameFilter+"%", "%"+nameFilter+"%")
+		idx += 2
+	}
+
+	q += " ORDER BY date_done DESC NULLS LAST"
+
+	rows, err := r.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.TaskResponse{}
+	for rows.Next() {
+		var t model.TaskResponse
+		var statusName sql.NullString
+		var dateDone sql.NullInt64
+		var dateClosed sql.NullInt64
+		var uname, uemail, ucolor sql.NullString
+		var timeEstimate sql.NullFloat64
+		var timeSpent sql.NullFloat64
+
+		if err := rows.Scan(&t.ID, &t.Name, &t.TextContent, &t.Description, &statusName, &dateDone, &dateClosed, &uname, &uemail, &ucolor, &timeEstimate, &timeSpent); err != nil {
+			return nil, err
+		}
+		if statusName.Valid {
+			t.Status.Name = statusName.String
+		}
+		if dateDone.Valid {
+			v := dateDone.Int64
+			t.DateDone = &v
+		}
+		if dateClosed.Valid {
+			v := dateClosed.Int64
+			t.DateClosed = &v
+		}
+		if uname.Valid {
+			t.Username = uname.String
+		}
+		if uemail.Valid {
+			t.Email = uemail.String
+		}
+		if ucolor.Valid {
+			t.Color = ucolor.String
+		}
+		if timeEstimate.Valid {
+			v := int64(timeEstimate.Float64)
+			t.TimeEstimateMs = &v
+		}
+		if timeSpent.Valid {
+			v := int64(timeSpent.Float64)
+			t.TimeSpentMs = &v
+		}
+
+		out = append(out, t)
+	}
+
+	return out, nil
+}

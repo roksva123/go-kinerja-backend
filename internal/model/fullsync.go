@@ -25,23 +25,26 @@ type FullSync struct {
 
 
 type FullSyncFilter struct {
+    Username  string `json:"username"`
+    Email     string `json:"email"`
+    Status    string `json:"status"`
     StartDate *int64 `json:"start_date"`
     EndDate   *int64 `json:"end_date"`
     Range     string `json:"range"` 
     Role      string `json:"role"`
 }
 
-type TaskWithMember struct {
-    TaskID      string
-    TaskName    string
-    TaskStatus  string
-    DateCreated *int64
-    DateDone    *int64
-    DateClosed  *int64
+// type TaskWithMember struct {
+//     TaskID      string
+//     TaskName    string
+//     TaskStatus  string
+//     DateCreated *int64
+//     DateDone    *int64
+//     DateClosed  *int64
 
-    UserID   int64
-    Username string
-    Email    string
-    Role     string
-    Color    string
-}
+//     UserID   int64
+//     Username string
+//     Email    string
+//     Role     string
+//     Color    string
+// }

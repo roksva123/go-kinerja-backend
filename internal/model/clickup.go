@@ -19,6 +19,7 @@ type UserSimple struct {
 
 type TaskResponse struct {
 	ID          string  `json:"id"`
+	TaskID        string  `json:"task_id"`
 	Name        string  `json:"name"`
 	TextContent string  `json:"text_content"`
 	Description string  `json:"description"`
@@ -28,8 +29,8 @@ type TaskResponse struct {
 		Type  string `json:"type"`
 		Color string `json:"color"`
 	} `json:"status"`
-	DateDone   *int64 `json:"date_done,omitempty"`   
-	DateClosed *int64 `json:"date_closed,omitempty"` 
+	DateDone       *int64 `json:"date_done,omitempty"`
+	DateClosed     *int64 `json:"date_closed,omitempty"`
 
 	Username string `json:"username"`
 	Email    string `json:"email"`
@@ -37,6 +38,11 @@ type TaskResponse struct {
 
 	TimeEstimateMs *int64 `json:"time_estimate_ms,omitempty"`
 	TimeSpentMs    *int64 `json:"time_spent_ms,omitempty"`
+
+	StartDate    *int64 `json:"start_date"`
+	DueDate      *int64 `json:"due_date"`
+	DateCreated *int64 `json:"date_created"`
+	TimeEstimate *int64 `json:"time_estimate"`
 }
 
 type FolderStatus struct {

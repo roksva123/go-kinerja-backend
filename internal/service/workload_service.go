@@ -19,7 +19,6 @@ func NewWorkloadService(repo *repository.PostgresRepo) *WorkloadService {
 	return &WorkloadService{Repo: repo, StdHoursPerDay: 8.0}
 }
 
-// Count weekdays between start and end inclusive
 func workingDaysBetween(start, end time.Time) int {
 	if end.Before(start) {
 		return 0
@@ -36,93 +35,94 @@ func workingDaysBetween(start, end time.Time) int {
 	return days
 }
 
-// ms -> hours float
 func msToHours(ms int64) float64 {
 	return float64(ms) / 1000.0 / 3600.0
 }
 
-func (s *WorkloadService) BuildWorkload(ctx context.Context, start, end time.Time, positionTag, source, nameFilter string) (*model.WorkloadResponse, error) {
-	// prepare timestamps in ms
-	var fromMs, toMs *int64
-	f := start.UnixNano() / int64(time.Millisecond)
-	t := end.UnixNano() / int64(time.Millisecond)
-	fromMs = &f
-	toMs = &t
+func (s *WorkloadService) BuildWorkload(
+	ctx context.Context,
+	start, end time.Time,
+	positionTag, source, nameFilter string,
+) (*model.WorkloadResponse, error) {
 
-	// fetch all users (show all users)
+	// Convert time → ms
+	startMs := start.UnixMilli()
+	endMs := end.UnixMilli()
+
 	users, err := s.Repo.GetAllUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// fetch tasks in range with filters
-	tasks, err := s.Repo.GetTasksByRange(ctx, fromMs, toMs, positionTag, source, nameFilter)
+	tasks, err := s.Repo.GetTasksByRange(ctx, &startMs, &endMs, positionTag, source, nameFilter)
 	if err != nil {
 		return nil, err
 	}
 
-	// map username -> tasks
+	// Group by user
 	tasksByUser := map[string][]model.TaskResponse{}
-	for _, tk := range tasks {
-		key := tk.Username
-		// if username empty use email as fallback
+	for _, t := range tasks {
+		key := t.Username
 		if key == "" {
-			key = tk.Email
+			key = t.Email
 		}
-		tasksByUser[key] = append(tasksByUser[key], tk)
+		tasksByUser[key] = append(tasksByUser[key], toTaskResponse(t))
 	}
 
-	// standard hours per person
+	// Workload calculation
 	wdays := workingDaysBetween(start, end)
 	standardHours := float64(wdays) * s.StdHoursPerDay
 
 	resp := &model.WorkloadResponse{
 		Start: start.Format("2006-01-02"),
 		End:   end.Format("2006-01-02"),
+		StandardHoursPerPerson: standardHours,
 	}
-	resp.StandardHoursPerPerson = standardHours
 
 	totalHoursAll := 0.0
-	usersOut := make([]model.WorkloadUser, 0, len(users))
+	outUsers := []model.WorkloadUser{}
+
 	for _, u := range users {
 		key := u.DisplayName
 		if key == "" {
 			key = u.Email
 		}
+
 		userTasks := tasksByUser[key]
 		totalHours := 0.0
+
 		byStatus := map[string]float64{}
-		byCat := map[string]float64{}
+		byCategory := map[string]float64{}
 
 		for _, tk := range userTasks {
-			// how many ms
 			ms := int64(0)
+
 			if tk.TimeSpentMs != nil && *tk.TimeSpentMs > 0 {
 				ms = *tk.TimeSpentMs
 			} else if tk.TimeEstimateMs != nil && *tk.TimeEstimateMs > 0 {
 				ms = *tk.TimeEstimateMs
-			} else {
-				ms = 0
 			}
+
 			hours := msToHours(ms)
-			if math.IsNaN(hours) || math.IsInf(hours,0) {
+			if math.IsNaN(hours) || math.IsInf(hours, 0) {
 				hours = 0
 			}
+
 			totalHours += hours
 
-			statusName := tk.Status.Name
-			if statusName == "" {
-				statusName = "unknown"
+			status := tk.Status.Name
+			if status == "" {
+				status = "unknown"
 			}
-			norm := normalizeStatus(statusName)
-			byStatus[norm] += hours
 
-			byCat[statusName] += hours
+			norm := normalizeStatus(status)
+			byStatus[norm] += hours
+			byCategory[status] += hours
 		}
 
 		totalHoursAll += totalHours
 
-		uOut := model.WorkloadUser{
+		outUsers = append(outUsers, model.WorkloadUser{
 			UserID:       u.ID,
 			Username:     u.DisplayName,
 			Name:         u.Name,
@@ -133,23 +133,21 @@ func (s *WorkloadService) BuildWorkload(ctx context.Context, start, end time.Tim
 			TaskCount:    len(userTasks),
 			Tasks:        userTasks,
 			ByStatus:     byStatus,
-			ByCategory:   byCat,
+			ByCategory:   byCategory,
 			StandardHours: standardHours,
-		}
-		usersOut = append(usersOut, uOut)
+		})
 	}
 
-	resp.Users = usersOut
-	resp.Summary.TotalUsers = len(usersOut)
+	resp.Users = outUsers
+	resp.Summary.TotalUsers = len(outUsers)
 	resp.Summary.TotalHours = totalHoursAll
-	if resp.Summary.TotalUsers > 0 {
-		resp.Summary.AvgHours = totalHoursAll / float64(resp.Summary.TotalUsers)
+	if len(outUsers) > 0 {
+		resp.Summary.AvgHours = totalHoursAll / float64(len(outUsers))
 	}
 
 	return resp, nil
 }
 
-// normalize status names to your buckets
 func normalizeStatus(s string) string {
 	l := strings.ToLower(s)
 	switch {
@@ -164,4 +162,34 @@ func normalizeStatus(s string) string {
 	default:
 		return l
 	}
+}
+
+func toTaskResponse(t model.Task) model.TaskResponse {
+    return model.TaskResponse{
+        ID:          t.TaskID,
+        Name:        t.Name,
+        TextContent: t.TextContent,
+        Description: t.Description,
+        Status: struct {
+            ID    string `json:"id"`
+            Name  string `json:"name"`
+            Type  string `json:"type"`
+            Color string `json:"color"`
+        }{
+            ID:    t.Status.ID,
+            Name:  t.Status.Name,
+            Type:  t.Status.Type,
+            Color: t.Status.Color,
+        },
+        DateDone:      t.DateDone,
+        DateClosed:    t.DateClosed,
+        Username:      t.Username,
+        Email:         t.Email,
+        Color:         t.Color,
+        TimeEstimateMs: t.TimeEstimateMs,
+        TimeSpentMs:    t.TimeSpentMs,
+        StartDate:      t.StartDate,
+        DueDate:        t.DueDate,
+        TimeEstimate:   t.TimeEstimate,
+    }
 }

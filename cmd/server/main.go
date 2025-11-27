@@ -24,14 +24,8 @@ func main() {
 		log.Fatal("failed load config:", err)
 	}
 
-	// DEBUG TOKEN
-
-
-
 	// INIT DB
 	repo := repository.NewPostgresRepo()
-
-
 
 	// MIGRATIONS
 	if err := repo.RunMigrations(context.Background()); err != nil {
@@ -47,49 +41,57 @@ func main() {
 	}
 
 	// SERVICES
-	clickService := service.NewClickUpService(repo, cfg.ClickUpToken, cfg.ClickUpTeamID)
-
-	// HANDLERS
-	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
-	clickupHandler := handlers.NewClickUpHandler(clickService)
+	clickSvc := service.NewClickUpService(repo, cfg.ClickUpToken, cfg.ClickUpTeamID)
 	workloadSvc := service.NewWorkloadService(repo)
-    workloadHandler := handlers.NewWorkloadHandler(workloadSvc, clickService)
+	// authSvc := service.NewAuthService(repo, cfg.JWTSecret) 
 
+	// HANDLERS (constructor diperbaiki)
+	clickupHandler := handlers.NewClickUpHandler(clickSvc)
+	workloadHandler := handlers.NewWorkloadHandler(workloadSvc)
+	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)          
 
 	// ROUTER
 	r := gin.Default()
-    r.Use(cors.New(cors.Config{
-    AllowOrigins:     []string{"*"},
-    AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-    AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-    ExposeHeaders:    []string{"Content-Length"},
-    AllowCredentials: true,
-    MaxAge: 12 * time.Hour,
-    }))
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	r.Static("/images", "public/images")
 	api := r.Group("/api/v1")
 
 	// CLICKUP ROUTES
 	clickup := api.Group("/clickup")
-    {
-        clickup.POST("/sync/team", clickupHandler.SyncTeam)
-        clickup.POST("/sync/members", clickupHandler.SyncMembers)
-        clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
-    
-        clickup.GET("/teams", clickupHandler.GetTeams)
-        clickup.GET("/members", clickupHandler.GetMembers)
-        clickup.GET("/tasks", clickupHandler.GetTasks)
+	{
+		clickup.POST("/sync/team", clickupHandler.SyncTeam)
+		clickup.POST("/sync/members", clickupHandler.SyncMembers)
+		clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
+		clickup.POST("/fullsync", clickupHandler.FullSync)
+
+		clickup.GET("/teams", clickupHandler.GetTeams)
+		clickup.GET("/members", clickupHandler.GetMembers)
+		clickup.GET("/tasks", clickupHandler.GetTasks)
 		clickup.GET("/fullsync", clickupHandler.GetFullSync)
-		clickup.GET("/fullsync/filter", clickupHandler.GetFullSync)
+		clickup.GET("/fullsync/filter", clickupHandler.GetFullSyncFiltered)
+		clickup.GET("/data", clickupHandler.GetFullData)
+        // clickup.POST("/sync", clickupHandler.SyncAll)
+		// clickup.GET("/workload/allsync", clickupHandler.AllSync)
+		// clickup.GET("/workload", clickupHandler.GetWorkload)
 
-    }
 
+	}
 
-    work := api.Group("/workload")
-    {
-        work.GET("", workloadHandler.GetWorkload)   
-        work.POST("/sync", workloadHandler.SyncAll) 
-    }
+	// WORKLOAD ROUTES
+	work := api.Group("/workload")
+	{
+		work.POST("/sync", workloadHandler.SyncAll)
+		work.GET("", workloadHandler.GetWorkload)
+	}
+
 	// AUTH ROUTES
 	auth := api.Group("/auth")
 	{

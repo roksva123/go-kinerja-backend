@@ -9,6 +9,8 @@ import (
     "io"
     "net/http"
     "time"
+    "log"
+    "strconv"
 
     "github.com/roksva123/go-kinerja-backend/internal/model"
     "github.com/roksva123/go-kinerja-backend/internal/repository"
@@ -45,7 +47,7 @@ func (s *ClickUpService) doRequest(ctx context.Context, method, url string) ([]b
     return body, nil
 }
 
-// SyncTeam -> fetch spaces and save as teams
+// SyncTeam 
 func (s *ClickUpService) SyncTeam(ctx context.Context) error {
     if s.TeamID == "" {
         return errors.New("team id not configured")
@@ -75,7 +77,7 @@ func (s *ClickUpService) SyncTeam(ctx context.Context) error {
     return nil
 }
 
-// SyncMembers -> fetch team members and upsert to users
+// SyncMembers 
 func (s *ClickUpService) SyncMembers(ctx context.Context) error {
     url := "https://api.clickup.com/api/v2/user"
 
@@ -84,7 +86,6 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
         return err
     }
 
-    // Struktur response ClickUp untuk endpoint /user
     var out struct {
         User struct {
             ID       int64  `json:"id"`
@@ -98,7 +99,7 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
         return err
     }
 
-    // Mapping ke model kamu
+    // Mapping ke model
     u := &model.User{
         ID:        out.User.ID,
         ClickUpID: out.User.ID,
@@ -117,52 +118,72 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
     return nil
 }
 
-// SyncTasks -> paginated tasks from team (note: team task endpoint can be heavy)
+// SyncTasks
 func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
     if s.TeamID == "" {
         return 0, errors.New("team id not configured")
     }
+
+    log.Println("=== START SYNC TASKS ===")
+
     page := 0
     total := 0
+
     for {
         url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/task?page=%d", s.TeamID, page)
+        log.Println("[REQUEST]", url)
+
         b, err := s.doRequest(ctx, "GET", url)
         if err != nil {
+            log.Println("❌ REQUEST ERROR:", err)
             return total, err
         }
+
         var out struct {
             Tasks []map[string]interface{} `json:"tasks"`
         }
+
         if err := json.Unmarshal(b, &out); err != nil {
+            log.Println("❌ JSON PARSE ERROR:", err)
             return total, err
         }
+
+        log.Printf("[PAGE %d] FOUND %d TASKS\n", page, len(out.Tasks))
+
         if len(out.Tasks) == 0 {
+            log.Println("=== NO MORE TASKS — FINISHED ===")
             break
         }
+
         for _, raw := range out.Tasks {
             t := &model.TaskResponse{}
-            // ID, name
+
+            log.Println("---- PROCESSING TASK ----")
+
             if id, ok := raw["id"].(string); ok {
                 t.ID = id
             }
+            log.Println("ID:", t.ID)
+
             if name, ok := raw["name"].(string); ok {
                 t.Name = name
             }
+            log.Println("Name:", t.Name)
+
             if txt, ok := raw["text_content"].(string); ok {
                 t.TextContent = txt
             }
+
             if desc, ok := raw["description"].(string); ok {
                 t.Description = desc
             }
-            // status nested
+
             if st, ok := raw["status"].(map[string]interface{}); ok {
                 if sid, ok := st["id"].(string); ok {
                     t.Status.ID = sid
                 }
-                if sname, ok := st["status"].(string); ok {
+                if sname, ok := st["name"].(string); ok {
                     t.Status.Name = sname
-                } else if sname2, ok := st["name"].(string); ok {
-                    t.Status.Name = sname2
                 }
                 if stype, ok := st["type"].(string); ok {
                     t.Status.Type = stype
@@ -171,24 +192,62 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                     t.Status.Color = scol
                 }
             }
-            // dates (ClickUp returns numeric as string sometimes)
-            if dd, ok := raw["date_done"].(float64); ok {
-                v := int64(dd)
-                t.DateDone = &v
-            } else if sdd, ok := raw["date_done"].(string); ok && sdd != "" {
-                // try parse numeric string
+            log.Printf("Status: %+v\n", t.Status)
+
+            if dd, ok := raw["date_done"].(string); ok && dd != "" {
+                if v, err := strconv.ParseInt(dd, 10, 64); err == nil {
+                    t.DateDone = &v
+                }
             }
-            if dc, ok := raw["date_closed"].(float64); ok {
-                v := int64(dc)
-                t.DateClosed = &v
+            if t.DateDone != nil {
+                log.Println("Date Done:", *t.DateDone)
+            } else {
+                log.Println("Date Done: NULL")
             }
-            // assignee or creator or assignees list
+
+            if dc, ok := raw["date_closed"].(string); ok && dc != "" {
+                if v, err := strconv.ParseInt(dc, 10, 64); err == nil {
+                    t.DateClosed = &v
+                }
+            }
+            if t.DateClosed != nil {
+                log.Println("Date Closed:", *t.DateClosed)
+            } else {
+                log.Println("Date Closed: NULL")
+            }
+
+            // Start Date
+            if sd, ok := raw["start_date"].(string); ok && sd != "" {
+                if v, err := strconv.ParseInt(sd, 10, 64); err == nil {
+                    t.StartDate = &v
+                }
+            }
+
+            // Due Date
+            if dd, ok := raw["due_date"].(string); ok && dd != "" {
+                if v, err := strconv.ParseInt(dd, 10, 64); err == nil {
+                    t.DueDate = &v
+                }
+            }
+
+            // Time Estimate
+            if teRaw, ok := raw["time_estimate"]; ok && teRaw != nil {
+                switch val := teRaw.(type) {
+                case float64:
+                    v := int64(val)
+                    t.TimeEstimate = &v
+                case string:
+                    if v, err := strconv.ParseInt(val, 10, 64); err == nil {
+                        t.TimeEstimate = &v
+                    }
+                }
+            }
+
+            // Assignees
             if assArr, ok := raw["assignees"].([]interface{}); ok && len(assArr) > 0 {
                 if a0, ok := assArr[0].(map[string]interface{}); ok {
                     if uname, ok := a0["username"].(string); ok {
                         t.Username = uname
-                    } else if name, ok := a0["username"].(string); ok {
-                        t.Username = name
                     }
                     if email, ok := a0["email"].(string); ok {
                         t.Email = email
@@ -197,29 +256,27 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                         t.Color = col
                     }
                 }
-            } else if creator, ok := raw["creator"].(map[string]interface{}); ok {
-                if uname, ok := creator["username"].(string); ok {
-                    t.Username = uname
-                }
-                if email, ok := creator["email"].(string); ok {
-                    t.Email = email
-                }
-                if col, ok := creator["color"].(string); ok {
-                    t.Color = col
-                }
+            }
+            log.Printf("Assignee: %s (%s) Color:%s\n", t.Username, t.Email, t.Color)
+
+            // UPSERT to DB
+            log.Println("UPSERT TASK:", t.ID)
+
+            if err := s.Repo.UpsertTask(ctx, t); err != nil {
+                log.Println("❌ UPSERT ERROR:", err)
+                log.Printf("RAW TASK: %+v\n", raw)
+                return total, err
             }
 
-            // save to DB (upsert)
-            if err := s.Repo.UpsertTask(ctx, t); err != nil {
-               fmt.Println("ERROR UPSERT TASK:", err)
-               fmt.Printf("RAW TASK: %+v\n", raw)
-               return total, err
-            }
+            log.Println("✔ UPSERT SUCCESS:", t.ID)
 
             total++
         }
+
         page++
     }
+
+    log.Println("=== SYNC COMPLETE — TOTAL:", total)
     return total, nil
 }
 
@@ -238,7 +295,6 @@ func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error)
     var out []model.FullSync
 
     for _, t := range tasks {
-        // cari user yang match dengan t.Username atau email
         var matchedMember *model.User
 
         for _, m := range members {
@@ -286,8 +342,6 @@ func (s *ClickUpService) GetTeams(ctx context.Context) ([]model.Team, error) {
 }
 
 func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.FullSyncFilter) ([]model.FullSync, error) {
-
-    // RANGE otomatis (last_6_months, next_6_months)
     now := time.Now()
 
     if filter.Range == "last_6_months" {
@@ -350,4 +404,133 @@ func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.Full
     }
 
     return out, nil
+}
+
+
+func (s *ClickUpService) PullTasks(ctx context.Context) (int, error) {
+    if s.TeamID == "" {
+        return 0, errors.New("team id not configured")
+    }
+
+    page := 0
+    total := 0
+
+    for {
+        url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/task?page=%d", s.TeamID, page)
+        b, err := s.doRequest(ctx, "GET", url)
+        if err != nil {
+            return total, err
+        }
+
+        var out struct {
+            Tasks []map[string]interface{} `json:"tasks"`
+        }
+        if err := json.Unmarshal(b, &out); err != nil {
+            return total, err
+        }
+        if len(out.Tasks) == 0 { break }
+
+        for _, raw := range out.Tasks {
+            t := &model.TaskResponse{}
+
+            if v, ok := raw["id"].(string); ok { t.ID = v }
+            if v, ok := raw["name"].(string); ok { t.Name = v }
+            if v, ok := raw["text_content"].(string); ok { t.TextContent = v }
+            if v, ok := raw["description"].(string); ok { t.Description = v }
+
+            if st, ok := raw["status"].(map[string]interface{}); ok {
+                t.Status.ID = safeString(st["id"])
+                t.Status.Name = safeString(st["name"])
+                t.Status.Type = safeString(st["type"])
+                t.Status.Color = safeString(st["color"])
+                t.DateCreated = toIntPtr(raw["date_created"])
+            }
+
+            // helper to parse int64 from either string/float
+            toIntPtr := func(x interface{}) *int64 {
+                if x == nil { return nil }
+                switch v := x.(type) {
+                case string:
+                    if v == "" { return nil }
+                    if n, err := strconv.ParseInt(v, 10, 64); err == nil { return &n }
+                case float64:
+                    n := int64(v); return &n
+                case int64:
+                    n := v; return &n
+                }
+                return nil
+            }
+
+            t.DateDone = toIntPtr(raw["date_done"])
+            t.DateClosed = toIntPtr(raw["date_closed"])
+            t.StartDate = toIntPtr(raw["start_date"])
+            t.DueDate = toIntPtr(raw["due_date"])
+            t.TimeEstimate = toIntPtr(raw["time_estimate"])
+
+            // assignee first
+            if arr, ok := raw["assignees"].([]interface{}); ok && len(arr) > 0 {
+                if a, ok := arr[0].(map[string]interface{}); ok {
+                    t.Username = safeString(a["username"])
+                    t.Email = safeString(a["email"])
+                    t.Color = safeString(a["color"])
+                    // if clickup id present:
+                    if cid, ok := a["id"].(float64); ok {
+                        v := int64(cid)
+                        // you can add an AssigneeClickUpID field in model if wanted
+                        _ = v
+                    }
+                }
+            }
+
+            if err := s.Repo.UpsertTask(ctx, t); err != nil {
+                return total, err
+            }
+            total++
+        }
+
+        page++
+    }
+
+    return total, nil
+}
+
+func safeString(v any) string {
+    switch val := v.(type) {
+    case nil:
+        return ""
+    case string:
+        return val
+    default:
+        return fmt.Sprintf("%v", val)
+    }
+}
+
+func (s *WorkloadService) SyncAll(ctx context.Context) error {
+    return nil
+}
+
+
+func (s *ClickUpService) FullSyncFlow(ctx context.Context, filter model.FullSyncFilter) ([]model.TaskWithMember, error) {
+    if _, err := s.PullTasks(ctx); err != nil {
+        return nil, err
+    }
+    return s.Repo.GetFullDataFiltered(ctx, filter.StartDate, filter.EndDate, filter.Role, filter.Username)
+}
+
+func toIntPtr(v interface{}) *int64 {
+	switch val := v.(type) {
+	case float64:
+		n := int64(val)
+		return &n
+	case int64:
+		return &val
+	case int:
+		n := int64(val)
+		return &n
+	case string:
+		if i, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return &i
+		}
+	}
+	return nil
 }

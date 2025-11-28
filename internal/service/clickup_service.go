@@ -11,6 +11,7 @@ import (
     "time"
     "log"
     "strconv"
+    "database/sql"
 
     "github.com/roksva123/go-kinerja-backend/internal/model"
     "github.com/roksva123/go-kinerja-backend/internal/repository"
@@ -18,19 +19,31 @@ import (
 
 type ClickUpService struct {
     Repo   *repository.PostgresRepo
+    APIKey string
     Token  string
     TeamID string
     Client *http.Client
+    DB     *sql.DB
 }
 
-func NewClickUpService(repo *repository.PostgresRepo, token, teamID string) *ClickUpService {
+func NewClickUpService(
+    repo *repository.PostgresRepo,
+    apiKey string,
+    token string,
+    teamID string,
+    db *sql.DB,
+) *ClickUpService {
+
     return &ClickUpService{
         Repo:   repo,
+        APIKey: apiKey,
         Token:  token,
         TeamID: teamID,
         Client: &http.Client{Timeout: 20 * time.Second},
+        DB:     db,
     }
 }
+
 
 func (s *ClickUpService) doRequest(ctx context.Context, method, url string) ([]byte, error) {
     req, _ := http.NewRequestWithContext(ctx, method, url, nil)
@@ -534,3 +547,159 @@ func toIntPtr(v interface{}) *int64 {
 	}
 	return nil
 }
+
+func (s *ClickUpService) AllSync(ctx context.Context) error {
+
+    // 1. Sync Team
+    if err := s.SyncTeam(ctx); err != nil {
+        return err
+    }
+
+    // 2. Sync Members
+    if err := s.SyncMembers(ctx); err != nil {
+        return err
+    }
+
+    // 3. Sync Tasks
+    _, err := s.SyncTasks(ctx)
+    if err != nil {
+        return err
+    }
+
+    return nil
+}
+
+func (s *ClickUpService) getTasksByUser(ctx context.Context, userID int64, start, end int64) ([]model.TaskResponse, error) {
+
+    rows, err := s.DB.QueryContext(ctx, `
+        SELECT
+        task_id,
+        name,
+        text_content,
+        description,
+        status_id,
+        status_name,
+        status_type,
+        status_color,
+        date_done,
+        date_closed,
+        assignee_user_id,
+        assignee_id,
+        assignee_username,
+        assignee_email,
+        time_spent_ms
+        FROM tasks
+        WHERE assignee_user_id = $1
+        AND start_date >= $2 AND due_date <= $3
+    `, userID, start, end)
+
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var tasks []model.TaskResponse
+
+    for rows.Next() {
+
+        var t model.TaskResponse
+
+        err := rows.Scan(
+        &t.TaskID,
+        &t.Name,
+        &t.TextContent,
+        &t.Description,
+        &t.Status.ID,
+        &t.Status.Name,
+        &t.Status.Type,
+        &t.Status.Color,
+        &t.DateDone,
+        &t.DateClosed,
+        &t.AssigneeUserID,
+        &t.AssigneeID,
+        &t.AssigneeUsername,
+        &t.AssigneeEmail,
+        &t.TimeSpentMs,
+        )
+
+        if err != nil {
+            return nil, err
+        }
+
+        tasks = append(tasks, t)
+    }
+
+    return tasks, nil
+}
+
+
+func (s *ClickUpService) GetWorkload(ctx context.Context, start, end int64) ([]model.WorkloadUser, error) {
+
+    rows, err := s.DB.QueryContext(ctx, `
+        SELECT 
+            assignee_user_id,
+            assignee_username,
+            assignee_email,
+            role,
+            color,
+            COUNT(*) AS task_count,
+            COALESCE(SUM(time_spent_ms), 0) AS total_ms
+        FROM tasks
+        WHERE start_date >= $1 AND due_date <= $2
+        GROUP BY assignee_user_id, assignee_username, assignee_email, role, color
+    `, start, end)
+
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var out []model.WorkloadUser
+
+    for rows.Next() {
+
+        var u model.WorkloadUser
+        err := rows.Scan(
+            &u.UserID,
+            &u.Username,
+            &u.Email,
+            &u.Role,
+            &u.Color,
+            &u.TaskCount,
+            &u.TotalMs,
+        )
+        if err != nil {
+            return nil, err
+        }
+
+        // convert ms → hours
+        u.TotalHours = float64(u.TotalMs) / 3600000.0
+
+        u.TotalTasks = int64(u.TaskCount)
+
+        u.ByStatus = make(map[string]float64)
+        u.ByCategory = make(map[string]float64) 
+
+        u.StandardHours = 8.0
+
+        // ambil detail task
+        tasks, err := s.getTasksByUser(ctx, u.UserID, start, end)
+        if err != nil {
+            return nil, err
+        }
+        u.Tasks = tasks
+
+        for _, t := range tasks {
+
+            if t.Status.Name != "" {
+                u.ByStatus[t.Status.Name]++
+            }
+
+        }
+
+        out = append(out, u)
+    }
+
+    return out, nil
+}
+

@@ -41,9 +41,15 @@ func main() {
 	}
 
 	// SERVICES
-	clickSvc := service.NewClickUpService(repo, cfg.ClickUpToken, cfg.ClickUpTeamID)
+	clickSvc := service.NewClickUpService(
+    repo,
+    cfg.ClickUpAPIKey, 
+    cfg.ClickUpToken,  
+    cfg.ClickUpTeamID, 
+    repo.DB,           
+)
 	workloadSvc := service.NewWorkloadService(repo)
-	// authSvc := service.NewAuthService(repo, cfg.JWTSecret) 
+	// authSvc := service.NewAuthService
 
 	// HANDLERS (constructor diperbaiki)
 	clickupHandler := handlers.NewClickUpHandler(clickSvc)
@@ -77,10 +83,9 @@ func main() {
 		clickup.GET("/tasks", clickupHandler.GetTasks)
 		clickup.GET("/fullsync", clickupHandler.GetFullSync)
 		clickup.GET("/fullsync/filter", clickupHandler.GetFullSyncFiltered)
+		clickup.POST("/workload/allsync", workloadHandler.AllSync)
 		clickup.GET("/data", clickupHandler.GetFullData)
-        // clickup.POST("/sync", clickupHandler.SyncAll)
-		// clickup.GET("/workload/allsync", clickupHandler.AllSync)
-		// clickup.GET("/workload", clickupHandler.GetWorkload)
+
 
 
 	}
@@ -89,8 +94,9 @@ func main() {
 	work := api.Group("/workload")
 	{
 		work.POST("/sync", workloadHandler.SyncAll)
+		work.GET("/workload", workloadHandler.GetWorkload)
 		work.GET("", workloadHandler.GetWorkload)
-	}
+	}	
 
 	// AUTH ROUTES
 	auth := api.Group("/auth")

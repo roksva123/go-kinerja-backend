@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -137,6 +138,7 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         start_date BIGINT,
         due_date BIGINT,
         time_estimate BIGINT,
+        time_spent_ms BIGINT,
     
         assignee_clickup_id TEXT,
         assignee_user_id BIGINT,
@@ -249,12 +251,11 @@ func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID st
 	return err
 }
 
-// UpsertUser (clickup user as local users)
+// UpsertUser
 func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
     _, err := r.DB.ExecContext(ctx, `
-        INSERT INTO users (clickup_id, username, name, email, password, role, color, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7, now())
-        ON CONFLICT (clickup_id) DO UPDATE SET
+        VALUES ($1, $1, $2, $3, $4, $5, $6, now())
+        ON CONFLICT (id) DO UPDATE SET
             username = EXCLUDED.username,
             name = EXCLUDED.name,
             email = EXCLUDED.email,
@@ -263,12 +264,10 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
             color = EXCLUDED.color,
             updated_at = now()
     `,
-        u.ClickUpID,
+        u.ID,
         u.DisplayName,
         u.Name,
-        u.Email,
-        u.PasswordHash,
-        u.Role,
+        u.Email        u.Role,
         u.Color,
     )
     return err
@@ -288,92 +287,80 @@ func (r *PostgresRepo) UpsertMember(ctx context.Context, clickupID, username, na
 
 // UpsertTask
 func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) error {
-    var dateDone, dateClosed, startDate, dueDate, timeEstimate interface{}
-
-    if t.DateDone != nil {
-        dateDone = *t.DateDone
-    }
-    if t.DateClosed != nil {
-        dateClosed = *t.DateClosed
-    }
-    if t.StartDate != nil {
-        startDate = *t.StartDate
-    }
-    if t.DueDate != nil {
-        dueDate = *t.DueDate
-    }
-    if t.TimeEstimate != nil {
-        timeEstimate = *t.TimeEstimate
-    }
-
     query := `
-    INSERT INTO tasks (
-    id, name, text_content, description,
-    status_id, status_name, status_type, status_color,
-    date_done, date_closed,
-    start_date, due_date, time_estimate,
-    assignee_clickup_id, assignee_user_id,
-    assignee_username, assignee_email, assignee_color,
-    updated_at
-    ) VALUES (
-    $1, $2, $3, $4,
-    $5, $6, $7, $8,
-    $9, $10,
-    $11, $12, $13,
-    $14, $15,
-    $16, $17, $18,
-    now()
-    )
-    ON CONFLICT (id) DO UPDATE SET
-    name = EXCLUDED.name,
-    text_content = EXCLUDED.text_content,
-    description = EXCLUDED.description,
-    status_id = EXCLUDED.status_id,
-    status_name = EXCLUDED.status_name,
-    status_type = EXCLUDED.status_type,
-    status_color = EXCLUDED.status_color,
-    date_done = EXCLUDED.date_done,
-    date_closed = EXCLUDED.date_closed,
-    start_date = EXCLUDED.start_date,
-    due_date = EXCLUDED.due_date,
-    time_estimate = EXCLUDED.time_estimate,
-    assignee_clickup_id = EXCLUDED.assignee_clickup_id,
-    assignee_user_id = EXCLUDED.assignee_user_id,
-    assignee_username = EXCLUDED.assignee_username,
-    assignee_email = EXCLUDED.assignee_email,
-    assignee_color = EXCLUDED.assignee_color,
-    updated_at = now();
+        INSERT INTO tasks (
+            id, name, text_content, description,
+            status_id, status_name, status_type, status_color,
+            date_done, date_closed, start_date, due_date,
+            assignee_user_id,
+            time_estimate, time_spent_ms
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (id)
+        DO UPDATE SET
+            name = EXCLUDED.name,
+            text_content = EXCLUDED.text_content,
+            description = EXCLUDED.description,
+            status_id = EXCLUDED.status_id,
+            status_name = EXCLUDED.status_name,
+            status_color = EXCLUDED.status_color,
+            date_done = EXCLUDED.date_done,
+            date_closed = EXCLUDED.date_closed,
+            start_date = EXCLUDED.start_date,
+            due_date = EXCLUDED.due_date,
+            assignee_user_id = EXCLUDED.assignee_user_id,
+            time_estimate = EXCLUDED.time_estimate,
+            time_spent_ms = EXCLUDED.time_spent_ms,
+            updated_at = now()
     `
 
     _, err := r.DB.ExecContext(ctx, query,
-       t.ID,
-       t.Name,
-       t.TextContent,
-       t.Description,
-   
-       t.Status.ID,
-       t.Status.Name,
-       t.Status.Type,
-       t.Status.Color,
-   
-       dateDone,
-       dateClosed,
-   
-       startDate,
-       dueDate,
-       timeEstimate,
-   
-       nil,             
-       t.AssigneeID,    
-   
-       t.Username,
-       t.Email,
-       t.Color,
+        t.ID,
+        t.Name,
+        t.TextContent,
+        t.Description,
+        t.Status.ID,
+        t.Status.Name,
+        t.Status.Type,
+        t.Status.Color,
+        t.DateDone,
+        t.DateClosed,
+        t.StartDate,
+        t.DueDate,
+        t.AssigneeUserID,
+        t.TimeEstimate,
+        t.TimeSpentMs,
     )
 
-
-
     return err
+}
+
+func (r *PostgresRepo) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
+    query := `
+        SELECT id, username, email, role, color 
+        FROM users
+        WHERE email = $1
+        LIMIT 1
+    `
+
+    var u model.User
+    err := r.DB.QueryRowContext(ctx, query, email).Scan(
+        &u.ID,
+        &u.DisplayName,
+        &u.Email,
+        &u.Role,
+        &u.Color,
+    )
+
+    if err == sql.ErrNoRows {
+        return nil, nil
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    return &u, nil
 }
 
 
@@ -692,28 +679,26 @@ func (r *PostgresRepo) GetTasksByRange(
     query := `
         SELECT 
             id,
-            COALESCE(task_id, '') AS task_id,
-            COALESCE(name, '') AS name,
-            COALESCE(text_content, '') AS text_content,
-            COALESCE(description, '') AS description,
-            COALESCE(status_id, '') AS status_id,
-            COALESCE(status_name, '') AS status_name,
-            COALESCE(status_type, '') AS status_type,
-            COALESCE(status_color, '') AS status_color,
+            task_id,
+            name,
+            text_content,
+            description,
+            status_id,
+            status_name,
+            status_type,
+            status_color,
             date_done,
             date_closed,
-            COALESCE(username, '') AS username,
-            COALESCE(email, '') AS email,
-            assignee_user_id,
-            assignee_clickup_id,
-            assignee_username,
-            assignee_email,
-            COALESCE(color, '') AS color,
-            time_estimate_ms,
-            time_spent_ms,
             start_date,
             due_date,
-            time_estimate
+            assignee_username,
+            assignee_email,
+            assignee_color,
+            assignee_user_id,
+            assignee_clickup_id,
+            username,
+            time_estimate,
+            time_spent
         FROM tasks
         WHERE 1=1
     `
@@ -721,37 +706,46 @@ func (r *PostgresRepo) GetTasksByRange(
     args := []interface{}{}
     i := 1
 
-    // Filter utama: date_done (bigint)
+
     if startMs != nil {
-        query += fmt.Sprintf(" AND date_done >= $%d", i)
+        query += fmt.Sprintf(`
+            AND start_date IS NOT NULL
+            AND start_date >= $%d
+        `, i)
         args = append(args, *startMs)
         i++
     }
 
     if endMs != nil {
-        query += fmt.Sprintf(" AND date_done <= $%d", i)
+        query += fmt.Sprintf(`
+            AND start_date IS NOT NULL
+            AND start_date <= $%d
+        `, i)
         args = append(args, *endMs)
         i++
     }
-
-    // Filter username
     if username != "" {
         query += fmt.Sprintf(" AND assignee_username ILIKE $%d", i)
         args = append(args, "%"+username+"%")
         i++
     }
 
-    // Filter status
     if status != "" {
         query += fmt.Sprintf(" AND status_name = $%d", i)
         args = append(args, status)
         i++
     }
 
-    query += " ORDER BY date_done ASC"
+    query += " ORDER BY start_date ASC"
+
+    log.Println("==== GetTasksByRange Query ====")
+    log.Println(query)
+    log.Printf("ARGS: %+v\n", args)
+    log.Println("================================")
 
     rows, err := r.DB.QueryContext(ctx, query, args...)
     if err != nil {
+        log.Println("Query ERROR:", err)
         return nil, err
     }
     defer rows.Close()
@@ -773,28 +767,45 @@ func (r *PostgresRepo) GetTasksByRange(
             &t.Status.Color,
             &t.DateDone,
             &t.DateClosed,
-            &t.Username,
-            &t.Email,
-            &t.AssigneeUserID,
-            &t.AssigneeClickupID,
-            &t.AssigneeUsername,
-            &t.AssigneeEmail,
-            &t.Color,
-            &t.TimeEstimateMs,
-            &t.TimeSpentMs,
             &t.StartDate,
             &t.DueDate,
+            &t.AssigneeUsername,
+            &t.AssigneeEmail,
+            &t.AssigneeColor,
+            &t.AssigneeUserID,
+            &t.AssigneeClickUpID,
+            &t.Username,
             &t.TimeEstimate,
+            &t.TimeSpentMs,
         )
+
         if err != nil {
+            log.Println("Scan ERROR:", err)
             return nil, err
         }
 
         list = append(list, t)
     }
 
+    log.Printf("=== FOUND %d TASKS ===", len(list))
+
+    for _, tt := range list {
+        log.Printf(
+            "TASK: %-40s | UID: %v | UN: %-20s | EMAIL: %-30s | START: %v | DUE: %v | SPENT: %v",
+            tt.Name,
+            tt.AssigneeUserID,
+            tt.AssigneeUsername,
+            tt.AssigneeEmail,
+            tt.StartDate,
+            tt.DueDate,
+            tt.TimeSpentMs,
+        )
+    }
+
     return list, nil
 }
+
+
 
 
 func (r *PostgresRepo) GetTasksFull(
@@ -935,6 +946,88 @@ func (r *PostgresRepo) GetTasksFull(
 
     return out, nil
 }
+
+func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate *time.Time) ([]*model.TaskResponse, error) {
+    query := `
+        SELECT 
+            id,
+            task_id,
+            name,
+            text_content,
+            description,
+            status_id,
+            status_name,
+            status_type,
+            status_color,
+            date_done,
+            date_closed,
+            assignee_user_id,
+            assignee_clickup_id,
+            assignee_username,
+            assignee_email,
+            start_date,
+            due_date,
+            time_estimate,
+            created_at,
+            updated_at
+        FROM tasks
+        WHERE 
+        (
+            (start_date IS NOT NULL AND start_date >= $1 AND start_date <= $2)
+            OR
+            (date_done IS NOT NULL AND date_done >= $1 AND date_done <= $2)
+        )
+        ORDER BY start_date DESC NULLS LAST, date_done DESC NULLS LAST
+    `
+
+    rows, err := r.DB.QueryContext(ctx, query, startDate, endDate)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    tasks := []*model.TaskResponse{}
+
+    for rows.Next() {
+        t := model.TaskResponse{}
+        err := rows.Scan(
+        &t.ID,
+        &t.TaskID,
+        &t.Name,
+        &t.TextContent,
+        &t.Description,
+        &t.Status.ID,
+        &t.Status.Name,
+        &t.Status.Type,
+        &t.Status.Color,
+        &t.DateDone,
+        &t.DateClosed,
+        &t.AssigneeUserID,
+        &t.AssigneeClickUpID,
+        &t.AssigneeUsername,
+        &t.AssigneeEmail,
+        &t.StartDate,
+        &t.DueDate,
+        &t.TimeEstimate,
+        &t.DateCreated,
+        &t.Category,
+        &t.Username,
+        &t.Email,
+        &t.Color,
+        &t.TimeEstimateMs,
+        &t.TimeSpentMs,
+        )
+
+        if err != nil {
+            return nil, err
+        }
+
+        tasks = append(tasks, &t)
+    }
+
+    return tasks, nil
+}
+
 
 func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([]model.WorkloadUser, error) {
     query := `

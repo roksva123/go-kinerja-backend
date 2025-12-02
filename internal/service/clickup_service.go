@@ -1,20 +1,20 @@
-
 package service
 
 import (
-    "context"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "io"
-    "net/http"
-    "time"
-    "log"
-    "strconv"
-    "database/sql"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
-    "github.com/roksva123/go-kinerja-backend/internal/model"
-    "github.com/roksva123/go-kinerja-backend/internal/repository"
+	"github.com/roksva123/go-kinerja-backend/internal/model"
+	"github.com/roksva123/go-kinerja-backend/internal/repository"
 )
 
 type ClickUpService struct {
@@ -92,44 +92,71 @@ func (s *ClickUpService) SyncTeam(ctx context.Context) error {
 
 // SyncMembers 
 func (s *ClickUpService) SyncMembers(ctx context.Context) error {
-    url := "https://api.clickup.com/api/v2/user"
+	if s.TeamID == "" {
+		return errors.New("team id not configured")
+	}
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/member", s.TeamID)
 
-    b, err := s.doRequest(ctx, "GET", url)
-    if err != nil {
-        return err
+	b, err := s.doRequest(ctx, "GET", url)
+	if err != nil {
+		return err
+	}
+
+	var out struct {
+		Members []struct {
+			User struct {
+				ID       int64  `json:"id"`
+				Username string `json:"username"`
+				Email    string `json:"email"`
+				Color    string `json:"color"`
+			} `json:"user"`
+			Role int `json:"role"`
+		} `json:"members"`
+	}
+
+	if err := json.Unmarshal(b, &out); err != nil {
+		return err
+	}
+
+	for _, member := range out.Members {
+		// Mapping ke model
+		u := &model.User{
+			ID:          member.User.ID,
+			ClickUpID:   member.User.ID,
+			DisplayName: member.User.Username,
+			Name:        member.User.Username, // Default name to username
+			Email:       member.User.Email,
+			Role:        "member", // Anda bisa menambahkan logika untuk role di sini
+			Color:       member.User.Color,
+		}
+
+		if err := s.Repo.UpsertUser(ctx, u); err != nil {
+			fmt.Println("ERROR UPSERT USER:", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func parseInt64Ptr(v interface{}) *int64 {
+    switch val := v.(type) {
+    case float64:
+        x := int64(val)
+        return &x
+    case string:
+        if val == "" { return nil }
+        if x, err := strconv.ParseInt(val, 10, 64); err == nil {
+            return &x
+        }
     }
-
-    var out struct {
-        User struct {
-            ID       int64  `json:"id"`
-            Username string `json:"username"`
-            Email    string `json:"email"`
-            Color    string `json:"color"`
-        } `json:"user"`
-    }
-
-    if err := json.Unmarshal(b, &out); err != nil {
-        return err
-    }
-
-    // Mapping ke model
-    u := &model.User{
-        ID:        out.User.ID,
-        ClickUpID: out.User.ID,
-        DisplayName:  out.User.Username,
-        Name:      out.User.Username,
-        Email:     out.User.Email,
-        Role:      "employee",
-        Color:     out.User.Color,
-    }
-
-    if err := s.Repo.UpsertUser(ctx, u); err != nil {
-        fmt.Println("ERROR UPSERT USER:", err)
-        return err
-    }
-
     return nil
 }
+
+func anyToInt64Ptr(v interface{}) *int64 {
+    return parseInt64Ptr(v)
+}
+
 
 // SyncTasks
 func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
@@ -169,120 +196,119 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
         }
 
         for _, raw := range out.Tasks {
-            t := &model.TaskResponse{}
 
+            rawJSON, _ := json.Marshal(raw)
+            log.Printf("--- RAW TASK DATA FROM CLICKUP ---\n%s\n---------------------------------", string(rawJSON))
+
+
+            t := &model.TaskResponse{}
             log.Println("---- PROCESSING TASK ----")
 
+            // ID
             if id, ok := raw["id"].(string); ok {
                 t.ID = id
             }
             log.Println("ID:", t.ID)
 
+            // Name
             if name, ok := raw["name"].(string); ok {
                 t.Name = name
             }
-            log.Println("Name:", t.Name)
 
+            // Content
             if txt, ok := raw["text_content"].(string); ok {
                 t.TextContent = txt
             }
-
             if desc, ok := raw["description"].(string); ok {
                 t.Description = desc
             }
 
+            // Status
             if st, ok := raw["status"].(map[string]interface{}); ok {
-                if sid, ok := st["id"].(string); ok {
-                    t.Status.ID = sid
-                }
-                if sname, ok := st["name"].(string); ok {
-                    t.Status.Name = sname
-                }
-                if stype, ok := st["type"].(string); ok {
-                    t.Status.Type = stype
-                }
-                if scol, ok := st["color"].(string); ok {
-                    t.Status.Color = scol
-                }
+                if v, ok := st["id"].(string); ok { t.Status.ID = v }
+                if v, ok := st["status"].(string); ok { t.Status.Name = v }
+                if v, ok := st["type"].(string); ok { t.Status.Type = v }
+                if v, ok := st["color"].(string); ok { t.Status.Color = v }
             }
             log.Printf("Status: %+v\n", t.Status)
 
-            if dd, ok := raw["date_done"].(string); ok && dd != "" {
-                if v, err := strconv.ParseInt(dd, 10, 64); err == nil {
-                    t.DateDone = &v
-                }
-            }
-            if t.DateDone != nil {
-                log.Println("Date Done:", *t.DateDone)
-            } else {
-                log.Println("Date Done: NULL")
-            }
+            // Dates
+            t.DateDone = parseInt64Ptr(raw["date_done"])
+            t.DateClosed = parseInt64Ptr(raw["date_closed"])
+            t.DateCreated = parseInt64Ptr(raw["date_created"])
+            t.DateUpdated = parseInt64Ptr(raw["date_updated"])
+            t.StartDate = parseInt64Ptr(raw["start_date"])
+            t.DueDate = parseInt64Ptr(raw["due_date"])
 
-            if dc, ok := raw["date_closed"].(string); ok && dc != "" {
-                if v, err := strconv.ParseInt(dc, 10, 64); err == nil {
-                    t.DateClosed = &v
-                }
+            if t.StartDate == nil {
+                t.StartDate = t.DateCreated
+                log.Printf("StartDate is nil, using DateCreated (%v) instead.", t.DateCreated)
             }
-            if t.DateClosed != nil {
-                log.Println("Date Closed:", *t.DateClosed)
-            } else {
-                log.Println("Date Closed: NULL")
-            }
-
-            // Start Date
-            if sd, ok := raw["start_date"].(string); ok && sd != "" {
-                if v, err := strconv.ParseInt(sd, 10, 64); err == nil {
-                    t.StartDate = &v
+            if t.DueDate == nil {
+                t.DueDate = t.StartDate 
+                if t.DateDone != nil {
+                    t.DueDate = t.DateDone
                 }
-            }
-
-            // Due Date
-            if dd, ok := raw["due_date"].(string); ok && dd != "" {
-                if v, err := strconv.ParseInt(dd, 10, 64); err == nil {
-                    t.DueDate = &v
-                }
+                log.Printf("DueDate is nil, using a fallback date (%v).", t.DueDate)
             }
 
             // Time Estimate
-            if teRaw, ok := raw["time_estimate"]; ok && teRaw != nil {
-                switch val := teRaw.(type) {
-                case float64:
-                    v := int64(val)
-                    t.TimeEstimate = &v
-                case string:
-                    if v, err := strconv.ParseInt(val, 10, 64); err == nil {
-                        t.TimeEstimate = &v
+            t.TimeEstimate = parseInt64Ptr(raw["time_estimate"])
+            t.TimeSpentMs = parseInt64Ptr(raw["time_spent"])
+
+            // Custom Fields
+            if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
+                for _, rawCF := range cfArr {
+                    cf := rawCF.(map[string]interface{})
+
+                    name, _ := cf["name"].(string)
+                    val := cf["value"]
+                    if val == nil { continue }
+
+                    // Tanggal Mulai
+                    if name == "Tanggal Mulai" {
+                        t.StartDate = anyToInt64Ptr(val)
+                    }
+
+                    // Tanggal Akhir
+                    if name == "Tanggal Akhir" {
+                        t.DueDate = anyToInt64Ptr(val)
                     }
                 }
             }
 
-            // Assignees
-            if assArr, ok := raw["assignees"].([]interface{}); ok && len(assArr) > 0 {
-                if a0, ok := assArr[0].(map[string]interface{}); ok {
+            // Assignee
+            if arr, ok := raw["assignees"].([]interface{}); ok && len(arr) > 0 {
+                if a0, ok := arr[0].(map[string]interface{}); ok {
+
                     if uname, ok := a0["username"].(string); ok {
-                        t.Username = uname
+                        t.AssigneeUsername = &uname
                     }
                     if email, ok := a0["email"].(string); ok {
-                        t.Email = email
+                        t.AssigneeEmail = &email
                     }
                     if col, ok := a0["color"].(string); ok {
-                        t.Color = col
+                        t.AssigneeColor = &col
+                    }
+                    if id, ok := a0["id"].(float64); ok {
+                        v := fmt.Sprintf("%.0f", id)
+                        t.AssigneeClickUpID = &v
+						uid := int64(id)
+						t.AssigneeUserID = &uid
                     }
                 }
             }
-            log.Printf("Assignee: %s (%s) Color:%s\n", t.Username, t.Email, t.Color)
 
-            // UPSERT to DB
+            log.Printf("Assignee: %v (%v)\n", t.AssigneeUsername, t.AssigneeEmail)
+
+            // UPSERT
             log.Println("UPSERT TASK:", t.ID)
-
             if err := s.Repo.UpsertTask(ctx, t); err != nil {
                 log.Println("❌ UPSERT ERROR:", err)
-                log.Printf("RAW TASK: %+v\n", raw)
                 return total, err
             }
 
             log.Println("✔ UPSERT SUCCESS:", t.ID)
-
             total++
         }
 
@@ -292,6 +318,14 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
     log.Println("=== SYNC COMPLETE — TOTAL:", total)
     return total, nil
 }
+
+
+func ptrString(s string) *string {
+    return &s
+}
+// func ptrInt64(v int64) *int64 {
+//     return &v
+// }
 
 func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error) {
 
@@ -569,137 +603,209 @@ func (s *ClickUpService) AllSync(ctx context.Context) error {
     return nil
 }
 
-func (s *ClickUpService) getTasksByUser(ctx context.Context, userID int64, start, end int64) ([]model.TaskResponse, error) {
-
-    rows, err := s.DB.QueryContext(ctx, `
-        SELECT
-        task_id,
-        name,
-        text_content,
-        description,
-        status_id,
-        status_name,
-        status_type,
-        status_color,
-        date_done,
-        date_closed,
-        assignee_user_id,
-        assignee_id,
-        assignee_username,
-        assignee_email,
-        time_spent_ms
-        FROM tasks
-        WHERE assignee_user_id = $1
-        AND start_date >= $2 AND due_date <= $3
-    `, userID, start, end)
-
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-
-    var tasks []model.TaskResponse
-
-    for rows.Next() {
-
-        var t model.TaskResponse
-
-        err := rows.Scan(
-        &t.TaskID,
-        &t.Name,
-        &t.TextContent,
-        &t.Description,
-        &t.Status.ID,
-        &t.Status.Name,
-        &t.Status.Type,
-        &t.Status.Color,
-        &t.DateDone,
-        &t.DateClosed,
-        &t.AssigneeUserID,
-        &t.AssigneeID,
-        &t.AssigneeUsername,
-        &t.AssigneeEmail,
-        &t.TimeSpentMs,
-        )
-
-        if err != nil {
-            return nil, err
-        }
-
-        tasks = append(tasks, t)
-    }
-
-    return tasks, nil
+func normalizeStatus(status string) string {
+	lowerStatus := strings.ToLower(status)
+	if strings.Contains(lowerStatus, "review") || strings.Contains(lowerStatus, "progress") {
+		return "progres"
+	}
+	if strings.Contains(lowerStatus, "do") { // "to do"
+		return "to do"
+	}
+	if strings.Contains(lowerStatus, "done") || strings.Contains(lowerStatus, "complete") || strings.Contains(lowerStatus, "closed") {
+		return "done"
+	}
+	if strings.Contains(lowerStatus, "cancel") {
+		return "canceled"
+	}
+	return lowerStatus // return as is if no match
 }
 
+func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
+	query := `
+		SELECT
+			u.id,
+			u.name,
+			u.username,
+			u.email,
+			u.role,
+			u.color,
+			t.id,
+			t.name,
+			t.status_name,
+			t.start_date,
+			t.due_date,
+			t.date_done,
+			t.time_spent_ms
+			ua.name AS assignee_full_name -- Tambahkan ini untuk nama assignee
+		FROM users u
+		LEFT JOIN tasks t ON u.id = t.assignee_user_id AND (
+			(t.start_date <= $2 AND t.due_date >= $1) OR
+			(t.date_done >= $1 AND t.date_done <= $2)
+		)
+		ORDER BY u.name ASC, t.start_date ASC
+	`
+	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
 
-func (s *ClickUpService) GetWorkload(ctx context.Context, start, end int64) ([]model.WorkloadUser, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    rows, err := s.DB.QueryContext(ctx, `
-        SELECT 
-            assignee_user_id,
-            assignee_username,
-            assignee_email,
-            role,
-            color,
-            COUNT(*) AS task_count,
-            COALESCE(SUM(time_spent_ms), 0) AS total_ms
-        FROM tasks
-        WHERE start_date >= $1 AND due_date <= $2
-        GROUP BY assignee_user_id, assignee_username, assignee_email, role, color
-    `, start, end)
+	userMap := make(map[int64]*model.WorkloadUser)
 
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	for rows.Next() {
+		var userID int64
+		var name, username, email, role, color string
+		var taskID, taskName, statusName, assigneeFullName sql.NullString 
+		var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
 
-    var out []model.WorkloadUser
+		err := rows.Scan(
+			&userID, &name, &username, &email, &role, &color,
+			&taskID, &taskName, &statusName,
+			&startDate, &dueDate, &dateDone, &timeSpentMs, 
+			&assigneeFullName,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-    for rows.Next() {
+		if _, ok := userMap[userID]; !ok {
+			userMap[userID] = &model.WorkloadUser{
+				UserID:        userID,
+				Name:          name,
+				Username:      username,
+				Email:         email,
+				Role:          role,
+				Color:         color,
+				Tasks:         []model.TaskDetail{},
+				ByStatus:      make(map[string]float64),
+				ByCategory:    make(map[string]float64),
+				StandardHours: 8.0,
+			}
+		}
 
-        var u model.WorkloadUser
-        err := rows.Scan(
-            &u.UserID,
-            &u.Username,
-            &u.Email,
-            &u.Role,
-            &u.Color,
-            &u.TaskCount,
-            &u.TotalMs,
-        )
-        if err != nil {
-            return nil, err
-        }
+		if taskID.Valid {
+			task := model.TaskDetail{
+				ID:         taskID.String,
+				Name:       taskName.String,
+				StatusName: normalizeStatus(statusName.String),
+				StartDate:  msToDateString(toInt64Ptr(startDate)),
+				DueDate:    msToDateString(toInt64Ptr(dueDate)),
+				DateDone:   msToDateString(toInt64Ptr(dateDone)),
+			}
+			if assigneeFullName.Valid { 
+				task.AssigneeName = &assigneeFullName.String
+			}
 
-        // convert ms → hours
-        u.TotalHours = float64(u.TotalMs) / 3600000.0
+			if timeSpentMs.Valid {
+				hours := float64(timeSpentMs.Int64) / 3600000.0
+				task.TimeSpentHours = hours
+				userMap[userID].TotalHours += hours
+			}
 
-        u.TotalTasks = int64(u.TaskCount)
+			userMap[userID].Tasks = append(userMap[userID].Tasks, task)
+		}
+	}
 
-        u.ByStatus = make(map[string]float64)
-        u.ByCategory = make(map[string]float64) 
+	var result []model.WorkloadUser
+	for _, user := range userMap {
+		user.TaskCount = len(user.Tasks)
+		result = append(result, *user)
+	}
 
-        u.StandardHours = 8.0
-
-        // ambil detail task
-        tasks, err := s.getTasksByUser(ctx, u.UserID, start, end)
-        if err != nil {
-            return nil, err
-        }
-        u.Tasks = tasks
-
-        for _, t := range tasks {
-
-            if t.Status.Name != "" {
-                u.ByStatus[t.Status.Name]++
-            }
-
-        }
-
-        out = append(out, u)
-    }
-
-    return out, nil
+	return result, nil
 }
 
+func msToDateString(ms *int64) *string {
+	if ms == nil {
+		return nil
+	}
+	t := time.UnixMilli(*ms)
+	s := t.Format("2006-01-02")
+	return &s
+}
+
+func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int64) ([]model.TaskDetail, error) {
+	query := `
+		SELECT
+			t.id,
+			t.name,
+			t.status_name,
+			t.start_date,
+			t.due_date,
+			t.date_done,
+			t.time_spent_ms,
+			t.assignee_user_id,
+			u.name
+		FROM tasks t
+		LEFT JOIN users u ON t.assignee_user_id = u.id
+		WHERE
+			-- Mencakup tugas yang aktif dalam rentang waktu
+			(t.start_date <= $2 AND t.due_date >= $1)
+			-- Mencakup tugas yang selesai dalam rentang waktu
+			OR (t.date_done >= $1 AND t.date_done <= $2)
+		ORDER BY t.start_date ASC
+	`
+	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
+
+	if err != nil {
+		log.Printf("Error querying tasks by range: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []model.TaskDetail
+	log.Println("--- Scanning Tasks By Range ---")
+	for rows.Next() {
+		var taskID, taskName, statusName string
+		var startDate, dueDate, dateDone, timeSpentMs, assigneeUserID sql.NullInt64
+		var assigneeName sql.NullString
+
+		err := rows.Scan(
+			&taskID,
+			&taskName,
+			&statusName,
+			&startDate,
+			&dueDate,
+			&dateDone,
+			&timeSpentMs,
+			&assigneeUserID,
+			&assigneeName,
+		)
+		if err != nil {
+			log.Printf("Error scanning task row: %v", err)
+			return nil, err
+		}
+
+		taskDetail := model.TaskDetail{
+			ID:         taskID,
+			Name:       taskName,
+			StatusName: normalizeStatus(statusName),
+			StartDate:  msToDateString(toInt64Ptr(startDate)),
+			DueDate:    msToDateString(toInt64Ptr(dueDate)),
+			DateDone:   msToDateString(toInt64Ptr(dateDone)),
+		}
+
+		if assigneeUserID.Valid {
+			taskDetail.AssigneeUserID = &assigneeUserID.Int64
+		}
+		if assigneeName.Valid {
+			taskDetail.AssigneeName = &assigneeName.String
+		}
+		if timeSpentMs.Valid {
+			taskDetail.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
+		}
+
+		tasks = append(tasks, taskDetail)
+	}
+	log.Printf("--- Found a total of %d tasks in range ---", len(tasks))
+
+	return tasks, nil
+}
+
+func toInt64Ptr(ni sql.NullInt64) *int64 {
+	if !ni.Valid {
+		return nil
+	}
+	return &ni.Int64
+}

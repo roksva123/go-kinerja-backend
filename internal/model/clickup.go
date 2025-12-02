@@ -9,9 +9,6 @@ type TaskStatus struct {
 	Color string `json:"color"`
 }
 
-
-
-
 type UserSimple struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
@@ -19,9 +16,6 @@ type UserSimple struct {
 	Color    string `json:"color"`
 	RoleKey  string `json:"role_key"`
 }
-
-
-
 
 type FolderStatus struct {
 	ID     string `json:"id"`

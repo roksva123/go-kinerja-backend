@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/roksva123/go-kinerja-backend/internal/service"
 	"github.com/roksva123/go-kinerja-backend/internal/model"
+	"github.com/roksva123/go-kinerja-backend/internal/service"
 )
 
-// CLICKUP HANDLER 
+// CLICKUP HANDLER
 
 type ClickUpHandler struct {
 	Click *service.ClickUpService
@@ -184,7 +184,8 @@ func (h *ClickUpHandler) GetFullData(c *gin.Context) {
 // WORKLOAD HANDLER 
 
 type WorkloadHandler struct {
-	Svc *service.WorkloadService
+	Svc      *service.WorkloadService
+	ClickSvc *service.ClickUpService
 }
 
 func NewWorkloadHandler(svc *service.WorkloadService) *WorkloadHandler {
@@ -192,31 +193,51 @@ func NewWorkloadHandler(svc *service.WorkloadService) *WorkloadHandler {
 }
 
 func (h *WorkloadHandler) GetWorkload(c *gin.Context) {
-	startStr := c.Query("start")
-	endStr := c.Query("end")
-	position := c.Query("positionTag")
-	source := c.Query("source")
-	name := c.Query("name")
+	startStr := c.Query("start") // e.g., "2025-01-01"
+	endStr := c.Query("end")     // e.g., "2025-07-01"
 
-	start, err := time.Parse("2006-01-02", startStr)
+	layout := "2006-01-02"
+	start, err := time.Parse(layout, startStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start date"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start date format, use YYYY-MM-DD"})
+		return
+	}
+	end, err := time.Parse(layout, endStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end date format, use YYYY-MM-DD"})
 		return
 	}
 
-	end, err := time.Parse("2006-01-02", endStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end date"})
-		return
-	}
+	// Convert to Unix milliseconds
+	startMs := start.UnixMilli()
+	endMs := end.UnixMilli()
 
-	resp, err := h.Svc.BuildWorkload(c, start, end, position, source, name)
+	users, err := h.ClickSvc.GetWorkload(c.Request.Context(), startMs, endMs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": resp})
+	// Calculate summary
+	totalHoursAll := 0.0
+	for _, u := range users {
+		totalHoursAll += u.TotalHours
+	}
+	avgHours := 0.0
+	if len(users) > 0 {
+		avgHours = totalHoursAll / float64(len(users))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"start": startStr,
+		"end":   endStr,
+		"summary": gin.H{
+			"total_users": len(users),
+			"total_hours": totalHoursAll,
+			"avg_hours":   avgHours,
+		},
+		"users": users,
+	})
 }
 
 func (h *WorkloadHandler) SyncAll(c *gin.Context) {
@@ -230,4 +251,32 @@ func (h *WorkloadHandler) SyncAll(c *gin.Context) {
 
 func (h *WorkloadHandler) AllSync(c *gin.Context) {
 	h.SyncAll(c)
+}
+
+func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
+	startStr := c.Query("start") 
+	endStr := c.Query("end")
+
+	layout := "2006-01-02"
+	start, err := time.Parse(layout, startStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start date format, use YYYY-MM-DD"})
+		return
+	}
+	end, err := time.Parse(layout, endStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end date format, use YYYY-MM-DD"})
+		return
+	}
+
+	startMs := start.UnixMilli()
+	endMs := end.UnixMilli()
+
+	tasks, err := h.ClickSvc.GetTasksByRange(c.Request.Context(), startMs, endMs) 
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"count": len(tasks), "tasks": tasks})
 }

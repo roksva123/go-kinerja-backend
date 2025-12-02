@@ -30,7 +30,10 @@ type Task struct {
 	TimeEstimate *int64 `json:"time_estimate"`
 
 	AssigneeUserID    *int64 `json:"assignee_user_id"`
-	AssigneeClickupID *int64 `json:"assignee_id"`
+	AssigneeClickUpID *int64 `json:"assignee_id"`
+	AssigneeColor     string  `json:"assingeescolor"`
+	OwnerUsername     string `json:"owner_username"`
+	OwnerEmail        string `json:"owner_email"`
 	AssigneeUsername  string `json:"assignee_username"`
 	AssigneeEmail     string `json:"assignee_email"`
 }
@@ -106,9 +109,12 @@ type TaskItem struct {
 	Category  string `json:"category"`
 }
 
+
 type TaskResponse struct {
     ID          string  `json:"id"`
     TaskID      string  `json:"task_id"`
+	CustomID    string  `json:"costom"`
+	CustomItemID  int64 `json:"custom_item_id"`
     Name        string  `json:"name"`
     TextContent string  `json:"text_content"`
     Description string  `json:"description"`
@@ -134,10 +140,34 @@ type TaskResponse struct {
     StartDate    *int64 `json:"start_date"`
     DueDate      *int64 `json:"due_date"`
     DateCreated  *int64 `json:"date_created"`
+	DateUpdated  *int64 `json:"date_updated"`
     TimeEstimate *int64 `json:"time_estimate"`
+	Assignees     []TaskAssignee  `json:"assignees"`
 
+	AssigneeClickUpID *string `json:"assignee_clickup_id"`
     AssigneeUserID   *int64 `json:"assignee_user_id"`
     AssigneeID       *int64 `json:"assignee_id"`
-    AssigneeUsername string `json:"assignee_username"`
-    AssigneeEmail    string `json:"assignee_email"`
+	AssigneeColor    *string `json:"assignee_color"`
+    AssigneeUsername *string `json:"assignee_username"`
+    AssigneeEmail    *string `json:"assignee_email"`
+}
+
+
+
+type Status struct {
+    ID        string `json:"id"`
+    Name      string `json:"status"`
+    Color     string `json:"color"`
+    Type      string `json:"type"`
+    OrderIndex int    `json:"orderindex"`
+}
+
+
+type TaskAssignee struct {
+    ID        int64   `json:"id"`
+    Username  string  `json:"username"`
+    Color     string  `json:"color"`
+    Initials  string  `json:"initials"`
+    Email     string  `json:"email"`
+    Profile   *string `json:"profilePicture"`
 }

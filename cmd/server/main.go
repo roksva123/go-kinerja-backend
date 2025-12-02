@@ -53,8 +53,12 @@ func main() {
 
 	// HANDLERS (constructor diperbaiki)
 	clickupHandler := handlers.NewClickUpHandler(clickSvc)
-	workloadHandler := handlers.NewWorkloadHandler(workloadSvc)
+	workloadHandler := &handlers.WorkloadHandler{
+		Svc:      workloadSvc,
+		ClickSvc: clickSvc,
+	}
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)          
+
 
 	// ROUTER
 	r := gin.Default()
@@ -95,6 +99,7 @@ func main() {
 	{
 		work.POST("/sync", workloadHandler.SyncAll)
 		work.GET("/workload", workloadHandler.GetWorkload)
+		work.GET("/tasks-by-range", workloadHandler.GetTasksByRange)
 		work.GET("", workloadHandler.GetWorkload)
 	}	
 

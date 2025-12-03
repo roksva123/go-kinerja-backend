@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/roksva123/go-kinerja-backend/internal/model"
 	"github.com/roksva123/go-kinerja-backend/internal/repository"
 )
@@ -122,18 +123,18 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 		return err
 	}
 
-	// Iterasi melalui setiap tim, dan jika ID-nya cocok, proses anggotanya
 	for _, team := range out.Teams {
 		if team.ID != s.TeamID {
-			continue // Lewati tim yang tidak relevan
+			continue 
 		}
 
 		for _, member := range team.Members {
-			// Mapping ke model User
 			u := &model.User{
-				DisplayName: member.User.Username,
+				ClickUpID:   member.User.ID,
+				Name: member.User.Username,
 				Email:       member.User.Email,
-				Role:        "member", // Anda bisa menambahkan logika untuk role di sini
+				Status:      "Aktif",
+				Role:        "member", 
 			}
 
 			if err := s.Repo.UpsertUser(ctx, u); err != nil {
@@ -246,24 +247,24 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
             t.DateUpdated = parseInt64Ptr(raw["date_updated"])
             t.StartDate = parseInt64Ptr(raw["start_date"])
             t.DueDate = parseInt64Ptr(raw["due_date"])
-            t.TimeSpentMs = parseInt64Ptr(raw["time_spent"]) // Pastikan ini juga diparse
+            t.TimeSpentMs = parseInt64Ptr(raw["time_spent"]) 
 
             if t.StartDate == nil {
                 t.StartDate = t.DateCreated
                 log.Printf("StartDate is nil, using DateCreated (%v) instead.", t.DateCreated)
             }
             if t.DueDate == nil {
+                
+                fmt.Println(t.DueDate)
                 t.DueDate = t.StartDate 
                 if t.DateDone != nil {
                     t.DueDate = t.DateDone
                 }
                 log.Printf("DueDate is nil, using a fallback date (%v).", t.DueDate)
-            }
+                            }
 
-            // Time Estimate
             t.TimeEstimate = parseInt64Ptr(raw["time_estimate"])
 
-            // Custom Fields
             if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
                 for _, rawCF := range cfArr {
                     cf := rawCF.(map[string]interface{})
@@ -284,37 +285,31 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                 }
             }
 
-            // Assignee
-            if arr, ok := raw["assignees"].([]interface{}); ok && len(arr) > 0 {
-                if a0, ok := arr[0].(map[string]interface{}); ok {
+			// Assignees (jamak)
+			var assigneeIDs []int64
+			if arr, ok := raw["assignees"].([]interface{}); ok {
+				for _, assigneeData := range arr {
+					if a, ok := assigneeData.(map[string]interface{}); ok {
+						if id, ok := a["id"].(float64); ok {
+							assigneeIDs = append(assigneeIDs, int64(id))
+						}
+					}
+				}
+			}
 
-                    if uname, ok := a0["username"].(string); ok {
-                        t.AssigneeUsername = &uname
-                    }
-                    if email, ok := a0["email"].(string); ok {
-                        t.AssigneeEmail = &email
-                    }
-                    if col, ok := a0["color"].(string); ok {
-                        t.AssigneeColor = &col
-                    }
-                    if id, ok := a0["id"].(float64); ok {
-                        v := fmt.Sprintf("%.0f", id)
-						uid := int64(id)
-						t.AssigneeClickUpID = &v
-						t.AssigneeUserID = &uid
-                    }
-                }
-            }
+			if len(assigneeIDs) > 0 {
+				firstAssigneeID := assigneeIDs[0]
+				t.AssigneeUserID = &firstAssigneeID
+			}
 
-            log.Printf("Assignee: %v (%v)\n", t.AssigneeUsername, t.AssigneeEmail)
-
-            // UPSERT
-            log.Println("UPSERT TASK:", t.ID)
             if err := s.Repo.UpsertTask(ctx, t); err != nil {
                 log.Println("❌ UPSERT ERROR:", err)
                 return total, err
             }
-
+			if err := s.Repo.UpsertTaskAssignees(ctx, t.ID, assigneeIDs); err != nil {
+				log.Printf("❌ FAILED TO UPSERT ASSIGNEES for task %s: %v\n", t.ID, err)
+				return total, err
+			}
             log.Println("✔ UPSERT SUCCESS:", t.ID)
             total++
         }
@@ -352,7 +347,7 @@ func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error)
         var matchedMember *model.User
 
         for _, m := range members {
-        if m.DisplayName == t.Username || m.Email == t.Email {
+        if m.Name == t.Username || m.Email == t.Email {
             matchedMember = &m
             break
             }
@@ -370,12 +365,10 @@ func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error)
 
         if matchedMember != nil {
             fs.UserID = matchedMember.ClickUpID
-            fs.DisplayName = matchedMember.DisplayName
+            fs.DisplayName = matchedMember.Name
             fs.Email = matchedMember.Email
             fs.Role = matchedMember.Role
-            fs.Color = matchedMember.Color
         }
-
         out = append(out, fs)
     }
 
@@ -625,100 +618,113 @@ func normalizeStatus(status string) string {
 }
 
 func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
-	query := `
-		SELECT
-			u.id,
-			u.name,
-			u.username,
-			u.email,
-			u.role,
-			u.color,
-			t.id,
-			t.name,
-			t.status_name,
-			t.start_date,
-			t.due_date,
-			t.date_done,
-			t.time_spent_ms
-			ua.name AS assignee_full_name
-		FROM users u
-		LEFT JOIN tasks t ON u.id = t.assignee_user_id AND (
-			(t.start_date <= $2 AND t.due_date >= $1) OR
-			(t.date_done >= $1 AND t.date_done <= $2)
-		)
-		LEFT JOIN users ua ON t.assignee_user_id = ua.id -- Join lagi untuk mendapatkan nama assignee
-		ORDER BY u.name ASC, t.start_date ASC
-	`
-	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
+    query := `
+        SELECT
+            t.id,
+            t.name,
+            t.status_name,
+            t.start_date,
+            t.due_date,
+            t.date_done,
+            t.time_spent_ms,
+            u.clickup_id,
+            u.name,
+            u.username,
+            u.email,
+            u.role
+        FROM tasks t
+        JOIN task_assignees ta ON t.id = ta.task_id
+        JOIN users u ON ta.user_clickup_id = u.clickup_id
+        WHERE
+            (t.start_date <= $2 AND t.due_date >= $1) OR
+            (t.date_done >= $1 AND t.date_done <= $2)
+        ORDER BY u.name, t.start_date
+    `
+    rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
+    if err != nil {
+        return nil, fmt.Errorf("error querying workload: %w", err)
+    }
+    defer rows.Close()
 
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+    // Langkah 2: Kelompokkan tugas berdasarkan pengguna dan tugas
+    userMap := make(map[int64]*model.WorkloadUser)
+    taskMap := make(map[string]*model.TaskDetail)
 
-	userMap := make(map[int64]*model.WorkloadUser)
+    for rows.Next() {
+        var taskID, taskName, statusName string
+        var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
+        var assigneeID int64
+        var assigneeName, assigneeUsername, assigneeEmail, assigneeRole string
 
-	for rows.Next() {
-		var userID int64
-		var name, username, email, role, color string
-		var taskID, taskName, statusName, assigneeFullName sql.NullString
-		var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
+        err := rows.Scan(
+            &taskID, &taskName, &statusName,
+            &startDate, &dueDate, &dateDone, &timeSpentMs,
+            &assigneeID, &assigneeName, &assigneeUsername, &assigneeEmail, &assigneeRole,
+        )
+        if err != nil {
+            return nil, fmt.Errorf("error scanning workload row: %w", err)
+        }
 
-		err := rows.Scan(
-			&userID, &name, &username, &email, &role, &color,
-			&taskID, &taskName, &statusName,
-			&startDate, &dueDate, &dateDone, &timeSpentMs,
-			&assigneeFullName,
-		) // Scan nama assignee di sini
-		if err != nil {
-			return nil, err
-		}
+        // Buat atau dapatkan user dari map
+        if _, ok := userMap[assigneeID]; !ok {
+            userMap[assigneeID] = &model.WorkloadUser{
+                UserID:        assigneeID,
+                Name:          assigneeName,
+                Username:      assigneeUsername,
+                Email:         assigneeEmail,
+                Role:          assigneeRole,
+                Tasks:         []model.TaskDetail{},
+                ByStatus:      make(map[string]float64),
+                ByCategory:    make(map[string]float64),
+                StandardHours: 8.0,
+            }
+        }
 
-		if _, ok := userMap[userID]; !ok {
-			userMap[userID] = &model.WorkloadUser{
-				UserID:        userID,
-				Name:          name,
-				Username:      username,
-				Email:         email,
-				Role:          role,
-				Color:         color,
-				Tasks:         []model.TaskDetail{},
-				ByStatus:      make(map[string]float64),
-				ByCategory:    make(map[string]float64),
-				StandardHours: 8.0,
-			}
-		}
+        // Buat atau dapatkan task dari map untuk menghindari duplikasi task
+        task, taskExists := taskMap[taskID]
+        if !taskExists {
+            task = &model.TaskDetail{
+                ID:         taskID,
+                Name:       taskName,
+                StatusName: normalizeStatus(statusName),
+                StartDate:  msToDateString(toInt64Ptr(startDate)),
+                DueDate:    msToDateString(toInt64Ptr(dueDate)),
+                DateDone:   msToDateString(toInt64Ptr(dateDone)),
+                Assignees:  []model.AssigneeDetail{},
+            }
+            if timeSpentMs.Valid {
+                task.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
+            }
+            taskMap[taskID] = task
+        }
 
-		if taskID.Valid {
-			task := model.TaskDetail{
-				ID:         taskID.String,
-				Name:       taskName.String,
-				StatusName: normalizeStatus(statusName.String),
-				StartDate:  msToDateString(toInt64Ptr(startDate)),
-				DueDate:    msToDateString(toInt64Ptr(dueDate)),
-				DateDone:   msToDateString(toInt64Ptr(dateDone)),
-			}
-			if assigneeFullName.Valid {
-				task.AssigneeName = &assigneeFullName.String
-			}
+        // Tambahkan assignee ke task
+        task.Assignees = append(task.Assignees, model.AssigneeDetail{
+            ClickUpID: assigneeID,
+            Name:      assigneeName,
+            Username:  assigneeUsername,
+            Email:     assigneeEmail,
+        })
+    }
 
-			if timeSpentMs.Valid {
-				hours := float64(timeSpentMs.Int64) / 3600000.0
-				task.TimeSpentHours = hours
-				userMap[userID].TotalHours += hours
-			}
+    // Langkah 3: Distribusikan tugas ke setiap user yang terlibat
+    for _, task := range taskMap {
+        for _, assignee := range task.Assignees {
+            if user, ok := userMap[assignee.ClickUpID]; ok {
+                user.Tasks = append(user.Tasks, *task)
+                user.TotalHours += task.TimeSpentHours
+            }
+        }
+    }
 
-			userMap[userID].Tasks = append(userMap[userID].Tasks, task)
-		}
-	}
+    // Langkah 4: Siapkan hasil akhir
+    var result []model.WorkloadUser
+    for _, user := range userMap {
+        user.TaskCount = len(user.Tasks)
+        result = append(result, *user)
+    }
 
-	var result []model.WorkloadUser
-	for _, user := range userMap {
-		user.TaskCount = len(user.Tasks)
-		result = append(result, *user)
-	}
-
-	return result, nil
+    return result, nil
 }
 
 func msToDateString(ms *int64) *string { 
@@ -740,17 +746,11 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			t.due_date,
 			t.date_done,
 			t.time_spent_ms,
-			u.id AS assignee_user_id,
-			u.clickup_id AS assignee_clickup_id,
-			u.name AS assignee_full_name
+			t.id as task_id_for_join 
 		FROM tasks t
-		LEFT JOIN users u ON t.assignee_user_id = u.id
 		WHERE
-			-- Mencakup tugas yang aktif dalam rentang waktu
 			(t.start_date <= $2 AND t.due_date >= $1)
-			-- Mencakup tugas yang selesai dalam rentang waktu
 			OR (t.date_done >= $1 AND t.date_done <= $2)
-		ORDER BY t.start_date ASC
 	`
 	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
 
@@ -760,12 +760,13 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	}
 	defer rows.Close()
 
-	var tasks []model.TaskDetail
+	taskMap := make(map[string]*model.TaskDetail)
+	var taskOrder []string
 	log.Println("--- Scanning Tasks By Range ---")
 	for rows.Next() {
 		var taskID, taskName, statusName string
-		var startDate, dueDate, dateDone, timeSpentMs, assigneeUserID, assigneeClickUpID sql.NullInt64
-		var assigneeName sql.NullString 
+		var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
+		var taskIDForJoin string
 
 		err := rows.Scan(
 			&taskID,
@@ -775,9 +776,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			&dueDate,
 			&dateDone,
 			&timeSpentMs,
-			&assigneeUserID,
-			&assigneeClickUpID,
-			&assigneeName,
+			&taskIDForJoin,
 		)
 		if err != nil {
 			log.Printf("Error scanning task row: %v", err)
@@ -791,26 +790,55 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			StartDate:  msToDateString(toInt64Ptr(startDate)),
 			DueDate:    msToDateString(toInt64Ptr(dueDate)),
 			DateDone:   msToDateString(toInt64Ptr(dateDone)),
+			Assignees:  []model.AssigneeDetail{},
 		}
 
-		if assigneeUserID.Valid {
-			taskDetail.AssigneeUserID = &assigneeUserID.Int64
-		}
-		if assigneeClickUpID.Valid {
-			taskDetail.AssigneeClickUpID = &assigneeClickUpID.Int64
-		}
-		if assigneeName.Valid {
-			taskDetail.AssigneeName = &assigneeName.String
-		}
 		if timeSpentMs.Valid {
 			taskDetail.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
 		}
 
-		tasks = append(tasks, taskDetail)
+		if _, exists := taskMap[taskID]; !exists {
+			taskMap[taskID] = &taskDetail
+			taskOrder = append(taskOrder, taskID)
+		}
 	}
-	log.Printf("--- Found a total of %d tasks in range ---", len(tasks))
+	rows.Close()
 
-	return tasks, nil
+	// Langkah 2: Ambil semua assignee untuk tugas-tugas yang ditemukan
+	assigneeQuery := `
+		SELECT ta.task_id, u.clickup_id, u.username, u.email, u.name
+		FROM task_assignees ta
+		JOIN users u ON ta.user_clickup_id = u.clickup_id
+		WHERE ta.task_id = ANY($1)
+	`
+	assigneeRows, err := s.DB.QueryContext(ctx, assigneeQuery, pq.Array(taskOrder))
+	if err != nil {
+		log.Printf("Error querying assignees: %v", err)
+		return nil, err
+	}
+	defer assigneeRows.Close()
+
+	for assigneeRows.Next() {
+		var taskID string
+		var assignee model.AssigneeDetail
+		if err := assigneeRows.Scan(&taskID, &assignee.ClickUpID, &assignee.Username, &assignee.Email, &assignee.Name); err != nil {
+			log.Printf("Error scanning assignee row: %v", err)
+			return nil, err
+		}
+
+		if task, ok := taskMap[taskID]; ok {
+			task.Assignees = append(task.Assignees, assignee)
+		}
+	}
+
+	// Langkah 3: Susun hasil akhir sesuai urutan
+	var result []model.TaskDetail
+	for _, taskID := range taskOrder {
+		result = append(result, *taskMap[taskID])
+	}
+
+	log.Printf("--- Found a total of %d tasks in range ---", len(result))
+	return result, nil
 }
 
 func toInt64Ptr(ni sql.NullInt64) *int64 {

@@ -4,13 +4,11 @@ import "time"
 
 type User struct {
     ClickUpID    int64     `json:"clickup_id"`
-    DisplayName  string    `json:"display_name"` 
     Name         string    `json:"name"`
     Email        string    `json:"email"`
     Role         string    `json:"role"`
-    Color        string    `json:"color"`
-    Photo        string    `json:"photo"`
-    PasswordHash string    `json:"-"`
+    Status       string    `json:"status"`
+    PasswordHash string    `json:"passwordhash"`
     CreatedAt    time.Time `json:"created_at"`
     UpdatedAt    time.Time `json:"updated_at"`
 }

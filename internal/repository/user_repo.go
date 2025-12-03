@@ -23,7 +23,7 @@ func (r *userRepo) GetByUsername(username string) (*model.User, error) {
     user := &model.User{}
     query := `SELECT id, username, password, name, role, created_at, updated_at FROM users WHERE username=$1`
     err := r.db.QueryRow(query, username).Scan(
-        &user, &user.DisplayName, &user.PasswordHash,
+        &user, &user.Name, &user.PasswordHash,
         &user.Name, &user.Role,
         &user.CreatedAt, &user.UpdatedAt,
     )
@@ -42,7 +42,7 @@ func (r *userRepo) UpsertUser(ctx context.Context, u *model.User) error {
             name = VALUES(name),
             role = VALUES(role)
     `
-	_, err := r.db.ExecContext(ctx, query, u.DisplayName, u.Name, u.Role)
+	_, err := r.db.ExecContext(ctx, query, u.Name, u.Name, u.Role)
 	return err
 }
 

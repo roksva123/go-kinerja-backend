@@ -59,7 +59,6 @@ func NewPostgresRepo() *PostgresRepo {
 		panic(err)
 	}
 
-	// verify connection
 	if err := db.Ping(); err != nil {
 		panic(err)
 	}
@@ -85,6 +84,8 @@ func (r *PostgresRepo) GetByUsername(ctx context.Context, username string) (*mod
 
 func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
     queries := []string{
+		`DROP TABLE IF EXISTS task_assignees;`,
+		`DROP TABLE IF EXISTS users CASCADE;`,
 		`CREATE TABLE IF NOT EXISTS admins (
          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
          username VARCHAR(100) UNIQUE NOT NULL,
@@ -106,18 +107,9 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
          email TEXT,
          password TEXT,
          role TEXT,
+         status TEXT NOT NULL DEFAULT 'active',
          created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
          updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-        );`,
-        `CREATE TABLE IF NOT EXISTS members (
-            id BIGSERIAL PRIMARY KEY,
-            clickup_id TEXT UNIQUE,
-            name TEXT,
-            email TEXT,
-            color TEXT,
-            team_id TEXT REFERENCES teams(team_id) ON DELETE SET NULL,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
         );`,
         `CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -137,7 +129,7 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         time_estimate BIGINT,
         time_spent_ms BIGINT,
     
-        assignee_clickup_id TEXT,
+        assignee_clickup_id BIGINT,
         assignee_user_id BIGINT,
         assignee_username TEXT,
         assignee_email TEXT,
@@ -145,6 +137,13 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
     
         created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+    );`,
+    `CREATE TABLE IF NOT EXISTS task_assignees (
+        id BIGSERIAL PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        user_clickup_id BIGINT NOT NULL REFERENCES users(clickup_id) ON DELETE CASCADE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+        UNIQUE(task_id, user_clickup_id)
     );`,
     `CREATE INDEX IF NOT EXISTS idx_tasks_start_date ON tasks(start_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
@@ -216,7 +215,7 @@ func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) { 
     for rows.Next() {
         var u model.User
         if err := rows.Scan(
-            &u.ClickUpID, &u.DisplayName, &u.Name, &u.Role,
+            &u.ClickUpID, &u.Name, &u.Name, &u.Role,
             &u.CreatedAt, &u.UpdatedAt,
         ); err != nil {
             return nil, err
@@ -235,6 +234,39 @@ func (r *PostgresRepo) UpsertAdmin(ctx context.Context, username, passwordHash s
 	return err
 }
 
+func (r *PostgresRepo) UpsertTaskAssignees(ctx context.Context, taskID string, assigneeIDs []int64) error {
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // Rollback jika ada error
+
+	// 1. Hapus semua assignee lama untuk task ini
+	_, err = tx.ExecContext(ctx, "DELETE FROM task_assignees WHERE task_id = $1", taskID)
+	if err != nil {
+		return fmt.Errorf("failed to delete old assignees: %w", err)
+	}
+
+	if len(assigneeIDs) == 0 {
+		return tx.Commit() // Jika tidak ada assignee baru, cukup commit dan selesai
+	}
+
+	// 2. Sisipkan semua assignee baru
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO task_assignees (task_id, user_clickup_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+	if err != nil {
+		return fmt.Errorf("failed to prepare insert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, userID := range assigneeIDs {
+		if _, err := stmt.ExecContext(ctx, taskID, userID); err != nil {
+			return fmt.Errorf("failed to insert assignee %d for task %s: %w", userID, taskID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // UpsertTeam
 func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID string) error {
 	_, err := r.DB.ExecContext(ctx, `
@@ -251,32 +283,23 @@ func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID st
 // UpsertUser
 func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
 	_, err := r.DB.ExecContext(ctx, `
-        INSERT INTO users (clickup_id, username, name, email, role)
-        VALUES ($1, $2, $2, $3, $4)
+        INSERT INTO users (clickup_id, username, name, email, role, status)
+        VALUES ($1, $2, $2, $3, $4, $5)
         ON CONFLICT (clickup_id) DO UPDATE SET
             username = EXCLUDED.username,
-            name = EXCLUDED.username,
+            name = EXCLUDED.name,
             email = EXCLUDED.email,
             role = EXCLUDED.role,
+            status = EXCLUDED.status,
             updated_at = now()
     `,
 		u.ClickUpID,
-		u.DisplayName,
+		u.Name,
 		u.Email,
 		u.Role,
+        u.Status,
 	)
 	return err
-}
-
-
-// UpsertMember 
-func (r *PostgresRepo) UpsertMember(ctx context.Context, clickupID, username, name, email, color, teamID string) error {
-    _, err := r.DB.ExecContext(ctx, `
-        INSERT INTO members (clickup_id, username, name, email, color, team_id)
-        VALUES ($1,$2,$3,$4,$5,$6)
-        ON CONFLICT (clickup_id) DO UPDATE SET username=EXCLUDED.username, name=EXCLUDED.name, email=EXCLUDED.email, color=EXCLUDED.color, team_id=EXCLUDED.team_id, updated_at=now()
-    `, clickupID, username, name, email, color, teamID)
-    return err
 }
 
 
@@ -340,10 +363,9 @@ func (r *PostgresRepo) GetUserByEmail(ctx context.Context, email string) (*model
 
     var u model.User
     err := r.DB.QueryRowContext(ctx, query, email).Scan(&u.ClickUpID,
-        &u.DisplayName,
+        &u.Name,
         &u.Email,
         &u.Role,
-        &u.Color,
     )
 
     if err == sql.ErrNoRows {
@@ -460,9 +482,11 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
 }
 
 
-// GetMembers
-func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
-    q := `SELECT clickup_id, username, name, email, role, created_at, updated_at FROM users ORDER BY name`
+
+
+
+func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) { 
+    q := `SELECT clickup_id, name, email, role, status, created_at, updated_at FROM users ORDER BY name`
     rows, err := r.DB.QueryContext(ctx, q)
     if err != nil {
         return nil, err
@@ -471,7 +495,7 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     var out []model.User
     for rows.Next() {
         var u model.User
-        if err := rows.Scan(&u.ClickUpID, &u.DisplayName, &u.Name, &u.Email, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+        if err := rows.Scan(&u.ClickUpID, &u.Name, &u.Email, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
             return nil, err
         }
         out = append(out, u)
@@ -507,14 +531,7 @@ func (r *PostgresRepo) GetTeams(ctx context.Context) ([]model.Team, error) {
 // GetFullSyncFiltered 
 func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int64, role string) ([]model.TaskWithMember, error) {
 
-    q := `
-        SELECT 
-            t.id, t.name, t.status, t.date_created, t.date_done, t.date_closed,
-            m.id, m.username, m.email, m.color
-        FROM tasks t
-        LEFT JOIN members m ON (t.username = m.username OR t.email = m.email)
-        WHERE 1=1
-    `
+    q := `SELECT 1` // Query ini tampaknya tidak lagi relevan/digunakan
 
     args := []interface{}{}
     idx := 1
@@ -580,14 +597,12 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
 func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *int64, role, username string) ([]model.TaskWithMember, error) {
     q := `
         SELECT 
-            t.id, t.name, t.description,
+            t.id, t.name, t.description, 
             t.status_name, t.status_type, t.status_color,
             t.start_date, t.due_date, t.date_done, t.date_closed, t.time_estimate, t.time_spent,
-            m.id, m.username, m.email, m.color,
-            tm.team_id, tm.name
+            u.clickup_id, u.username, u.email, u.role
         FROM tasks t
-        LEFT JOIN members m ON (t.assignee_username = m.username OR t.assignee_email = m.email)
-        LEFT JOIN teams tm ON m.team_id = tm.team_id
+        LEFT JOIN users u ON t.assignee_user_id = u.clickup_id
         WHERE 1=1
     `
 
@@ -606,7 +621,7 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
     }
 
     if username != "" {
-        q += fmt.Sprintf(" AND (t.assignee_username ILIKE $%d OR m.username ILIKE $%d)", idx, idx+1)
+        q += fmt.Sprintf(" AND (t.assignee_username ILIKE $%d OR u.username ILIKE $%d)", idx, idx)
         args = append(args, "%"+username+"%", "%"+username+"%")
         idx += 2
     }
@@ -622,17 +637,15 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
     var out []model.TaskWithMember
     for rows.Next() {
         var t model.TaskWithMember
-        var mID sql.NullInt64
-        var mU, mE, mC sql.NullString
-        var teamID, teamName sql.NullString
+        var userID sql.NullInt64
+        var userUsername, userEmail, userRole sql.NullString
         var startDate, dueDate, dateDone, dateClosed, timeEstimate, timeSpent sql.NullInt64
 
         err := rows.Scan(
             &t.TaskID, &t.TaskName, &t.TaskDescription,
             &t.TaskStatus, &t.TaskStatusType, &t.TaskStatusColor,
             &startDate, &dueDate, &dateDone, &dateClosed, &timeEstimate, &timeSpent,
-            &mID, &mU, &mE, &mC,
-            &teamID, &teamName,
+            &userID, &userUsername, &userEmail, &userRole,
         )
         if err != nil {
             return nil, err
@@ -645,15 +658,11 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
         if timeEstimate.Valid { v := timeEstimate.Int64; t.TimeEstimate = &v }
         if timeSpent.Valid { v := timeSpent.Int64; t.TimeSpent = &v }
 
-        if mID.Valid {
-            t.UserID = mID.Int64
-            t.Username = mU.String
-            t.Email = mE.String
-            t.Color = mC.String
-        }
-        if teamID.Valid {
-            t.TeamID = &teamID.String
-            t.TeamName = &teamName.String
+        if userID.Valid {
+            t.UserID = userID.Int64
+            t.Username = userUsername.String
+            t.Email = userEmail.String
+            t.Role = userRole.String
         }
 
         out = append(out, t)
@@ -825,21 +834,8 @@ func (r *PostgresRepo) GetTasksFull(
             t.date_done,
             t.date_closed,
             t.time_estimate,
-            t.time_spent,
-
-            m.id AS user_id,
-            m.username,
-            m.email,
-            m.color,
-            m.role,
-
-            tm.team_id,
-            tm.name AS team_name
+            t.time_spent_ms
         FROM tasks t
-        LEFT JOIN members m
-            ON (t.assignee_username = m.username OR t.assignee_email = m.email)
-        LEFT JOIN teams tm
-            ON m.team_id = tm.team_id
         WHERE 1=1
     `
 
@@ -859,8 +855,8 @@ func (r *PostgresRepo) GetTasksFull(
     }
 
     if username != "" {
-        q += fmt.Sprintf(" AND (t.assignee_username ILIKE $%d OR m.username ILIKE $%d)", i, i+1)
-        args = append(args, "%"+username+"%", "%"+username+"%")
+        q += fmt.Sprintf(" AND (t.assignee_username ILIKE $%d)", i)
+        args = append(args, "%"+username+"%")
         i += 2
     }
 
@@ -886,9 +882,6 @@ func (r *PostgresRepo) GetTasksFull(
 
         var (
             startDate, dueDate, dateDone, dateClosed, timeEstimate, timeSpent sql.NullInt64
-            userID sql.NullInt64
-            uname, email, color, urole sql.NullString
-            teamID, teamName sql.NullString
         )
 
         err := rows.Scan(
@@ -905,15 +898,6 @@ func (r *PostgresRepo) GetTasksFull(
             &dateClosed,
             &timeEstimate,
             &timeSpent,
-
-            &userID,
-            &uname,
-            &email,
-            &color,
-            &urole,
-
-            &teamID,
-            &teamName,
         )
         if err != nil {
             return nil, err
@@ -925,15 +909,6 @@ func (r *PostgresRepo) GetTasksFull(
         if dateClosed.Valid { v := dateClosed.Int64; tf.DateClosed = &v }
         if timeEstimate.Valid { v := timeEstimate.Int64; tf.TimeEstimate = &v }
         if timeSpent.Valid { v := timeSpent.Int64; tf.TimeSpent = &v }
-
-        if userID.Valid { u := userID.Int64; tf.UserID = &u }
-        if uname.Valid { s := uname.String; tf.Username = &s }
-        if email.Valid { s := email.String; tf.Email = &s }
-        if color.Valid { s := color.String; tf.Color = &s }
-        if urole.Valid { s := urole.String; tf.Role = &s }
-
-        if teamID.Valid { s := teamID.String; tf.TeamID = &s }
-        if teamName.Valid { s := teamName.String; tf.TeamName = &s }
 
         out = append(out, tf)
     }
@@ -1030,7 +1005,7 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
             u.username,
             u.email,
             u.role,
-            u.color,
+            '' as color,
             COALESCE(SUM(t.time_spent), 0) AS total_ms,
             COUNT(t.id) AS task_count,
             (
@@ -1043,7 +1018,7 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
         LEFT JOIN tasks t 
             ON t.assignee_user_id = u.clickup_id
            AND t.date_closed BETWEEN $1 AND $2
-        GROUP BY u.id, u.username, u.email, u.role, u.color
+        GROUP BY u.clickup_id, u.username, u.email, u.role
         ORDER BY u.username ASC;
     `
 
@@ -1061,7 +1036,7 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
             &u.Username,
             &u.Email,
             &u.Role,
-            &u.Color,
+            &u.Color, // Tetap scan, karena query memberikan nilai kosong
             &u.TotalMs,
             &u.TaskCount,
             &u.TotalTasks,

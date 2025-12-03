@@ -12,24 +12,24 @@ type WorkloadUser struct {
     TotalHours    float64         `json:"total_hours"`
     TaskCount     int             `json:"task_count"`
     TotalTasks    int64           `json:"-"` 
-    TotalMs       int64           `json:"-"` 
+    TotalMs       int64           `json:"-"`
     Tasks         []TaskDetail    `json:"tasks"`
     ByStatus      map[string]float64 `json:"by_status"`
     ByCategory    map[string]float64 `json:"by_category"`
     StandardHours float64         `json:"standard_hours"`
 }
 
-// TaskDetail adalah struct untuk respons yang lebih bersih dan mudah dibaca.
 type TaskDetail struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	StatusName     string  `json:"status_name"`
-	AssigneeUserID *int64  `json:"assignee_user_id,omitempty"`
-	AssigneeName   *string `json:"assignee_name,omitempty"`
-	StartDate      *string `json:"start_date,omitempty"`
-	DueDate        *string `json:"due_date,omitempty"`
-	DateDone       *string `json:"date_done,omitempty"`
-	TimeSpentHours float64 `json:"time_spent_hours"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	StatusName      string   `json:"status_name"`
+	StartDate       *string  `json:"start_date"`
+	DueDate         *string  `json:"due_date"`
+	DateDone        *string  `json:"date_done,omitempty"`
+	TimeSpentHours  float64  `json:"time_spent_hours"`
+	AssigneeUserID    *int64 `json:"assignee_user_id,omitempty"`
+	AssigneeClickUpID *int64 `json:"assignee_clickup_id,omitempty"`
+	AssigneeName      *string  `json:"assignee_name,omitempty"`
 }
 
 type WorkloadSummary struct {

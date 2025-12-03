@@ -95,7 +95,7 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 	if s.TeamID == "" {
 		return errors.New("team id not configured")
 	}
-	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/member", s.TeamID)
+	url := "https://api.clickup.com/api/v2/team"
 
 	b, err := s.doRequest(ctx, "GET", url)
 	if err != nil {
@@ -103,36 +103,43 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 	}
 
 	var out struct {
-		Members []struct {
-			User struct {
-				ID       int64  `json:"id"`
-				Username string `json:"username"`
-				Email    string `json:"email"`
-				Color    string `json:"color"`
-			} `json:"user"`
-			Role int `json:"role"`
-		} `json:"members"`
+		Teams []struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Members []struct {
+				User struct {
+					ID       int64  `json:"id"`
+					Username string `json:"username"`
+					Email    string `json:"email"`
+					Color    string `json:"color"`
+				} `json:"user"`
+				Role int `json:"role"`
+			} `json:"members"`
+		} `json:"teams"`
 	}
 
 	if err := json.Unmarshal(b, &out); err != nil {
 		return err
 	}
 
-	for _, member := range out.Members {
-		// Mapping ke model
-		u := &model.User{
-			ID:          member.User.ID,
-			ClickUpID:   member.User.ID,
-			DisplayName: member.User.Username,
-			Name:        member.User.Username, // Default name to username
-			Email:       member.User.Email,
-			Role:        "member", // Anda bisa menambahkan logika untuk role di sini
-			Color:       member.User.Color,
+	// Iterasi melalui setiap tim, dan jika ID-nya cocok, proses anggotanya
+	for _, team := range out.Teams {
+		if team.ID != s.TeamID {
+			continue // Lewati tim yang tidak relevan
 		}
 
-		if err := s.Repo.UpsertUser(ctx, u); err != nil {
-			fmt.Println("ERROR UPSERT USER:", err)
-			return err
+		for _, member := range team.Members {
+			// Mapping ke model User
+			u := &model.User{
+				DisplayName: member.User.Username,
+				Email:       member.User.Email,
+				Role:        "member", // Anda bisa menambahkan logika untuk role di sini
+			}
+
+			if err := s.Repo.UpsertUser(ctx, u); err != nil {
+				fmt.Println("ERROR UPSERT USER:", err)
+				return err
+			}
 		}
 	}
 
@@ -239,6 +246,7 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
             t.DateUpdated = parseInt64Ptr(raw["date_updated"])
             t.StartDate = parseInt64Ptr(raw["start_date"])
             t.DueDate = parseInt64Ptr(raw["due_date"])
+            t.TimeSpentMs = parseInt64Ptr(raw["time_spent"]) // Pastikan ini juga diparse
 
             if t.StartDate == nil {
                 t.StartDate = t.DateCreated
@@ -254,7 +262,6 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 
             // Time Estimate
             t.TimeEstimate = parseInt64Ptr(raw["time_estimate"])
-            t.TimeSpentMs = parseInt64Ptr(raw["time_spent"])
 
             // Custom Fields
             if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
@@ -292,8 +299,8 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                     }
                     if id, ok := a0["id"].(float64); ok {
                         v := fmt.Sprintf("%.0f", id)
-                        t.AssigneeClickUpID = &v
 						uid := int64(id)
+						t.AssigneeClickUpID = &v
 						t.AssigneeUserID = &uid
                     }
                 }
@@ -362,7 +369,7 @@ func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error)
         }
 
         if matchedMember != nil {
-            fs.UserID = matchedMember.ID
+            fs.UserID = matchedMember.ClickUpID
             fs.DisplayName = matchedMember.DisplayName
             fs.Email = matchedMember.Email
             fs.Role = matchedMember.Role
@@ -584,17 +591,14 @@ func toIntPtr(v interface{}) *int64 {
 
 func (s *ClickUpService) AllSync(ctx context.Context) error {
 
-    // 1. Sync Team
     if err := s.SyncTeam(ctx); err != nil {
         return err
     }
 
-    // 2. Sync Members
     if err := s.SyncMembers(ctx); err != nil {
         return err
     }
 
-    // 3. Sync Tasks
     _, err := s.SyncTasks(ctx)
     if err != nil {
         return err
@@ -617,7 +621,7 @@ func normalizeStatus(status string) string {
 	if strings.Contains(lowerStatus, "cancel") {
 		return "canceled"
 	}
-	return lowerStatus // return as is if no match
+	return lowerStatus 
 }
 
 func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
@@ -636,12 +640,13 @@ func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) 
 			t.due_date,
 			t.date_done,
 			t.time_spent_ms
-			ua.name AS assignee_full_name -- Tambahkan ini untuk nama assignee
+			ua.name AS assignee_full_name
 		FROM users u
 		LEFT JOIN tasks t ON u.id = t.assignee_user_id AND (
 			(t.start_date <= $2 AND t.due_date >= $1) OR
 			(t.date_done >= $1 AND t.date_done <= $2)
 		)
+		LEFT JOIN users ua ON t.assignee_user_id = ua.id -- Join lagi untuk mendapatkan nama assignee
 		ORDER BY u.name ASC, t.start_date ASC
 	`
 	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
@@ -656,15 +661,15 @@ func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) 
 	for rows.Next() {
 		var userID int64
 		var name, username, email, role, color string
-		var taskID, taskName, statusName, assigneeFullName sql.NullString 
+		var taskID, taskName, statusName, assigneeFullName sql.NullString
 		var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
 
 		err := rows.Scan(
 			&userID, &name, &username, &email, &role, &color,
 			&taskID, &taskName, &statusName,
-			&startDate, &dueDate, &dateDone, &timeSpentMs, 
+			&startDate, &dueDate, &dateDone, &timeSpentMs,
 			&assigneeFullName,
-		)
+		) // Scan nama assignee di sini
 		if err != nil {
 			return nil, err
 		}
@@ -693,7 +698,7 @@ func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) 
 				DueDate:    msToDateString(toInt64Ptr(dueDate)),
 				DateDone:   msToDateString(toInt64Ptr(dateDone)),
 			}
-			if assigneeFullName.Valid { 
+			if assigneeFullName.Valid {
 				task.AssigneeName = &assigneeFullName.String
 			}
 
@@ -716,7 +721,7 @@ func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) 
 	return result, nil
 }
 
-func msToDateString(ms *int64) *string {
+func msToDateString(ms *int64) *string { 
 	if ms == nil {
 		return nil
 	}
@@ -735,8 +740,9 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			t.due_date,
 			t.date_done,
 			t.time_spent_ms,
-			t.assignee_user_id,
-			u.name
+			u.id AS assignee_user_id,
+			u.clickup_id AS assignee_clickup_id,
+			u.name AS assignee_full_name
 		FROM tasks t
 		LEFT JOIN users u ON t.assignee_user_id = u.id
 		WHERE
@@ -758,8 +764,8 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	log.Println("--- Scanning Tasks By Range ---")
 	for rows.Next() {
 		var taskID, taskName, statusName string
-		var startDate, dueDate, dateDone, timeSpentMs, assigneeUserID sql.NullInt64
-		var assigneeName sql.NullString
+		var startDate, dueDate, dateDone, timeSpentMs, assigneeUserID, assigneeClickUpID sql.NullInt64
+		var assigneeName sql.NullString 
 
 		err := rows.Scan(
 			&taskID,
@@ -770,6 +776,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			&dateDone,
 			&timeSpentMs,
 			&assigneeUserID,
+			&assigneeClickUpID,
 			&assigneeName,
 		)
 		if err != nil {
@@ -780,7 +787,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		taskDetail := model.TaskDetail{
 			ID:         taskID,
 			Name:       taskName,
-			StatusName: normalizeStatus(statusName),
+			StatusName: statusName,
 			StartDate:  msToDateString(toInt64Ptr(startDate)),
 			DueDate:    msToDateString(toInt64Ptr(dueDate)),
 			DateDone:   msToDateString(toInt64Ptr(dateDone)),
@@ -788,6 +795,9 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 
 		if assigneeUserID.Valid {
 			taskDetail.AssigneeUserID = &assigneeUserID.Int64
+		}
+		if assigneeClickUpID.Valid {
+			taskDetail.AssigneeClickUpID = &assigneeClickUpID.Int64
 		}
 		if assigneeName.Valid {
 			taskDetail.AssigneeName = &assigneeName.String

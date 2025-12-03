@@ -3,7 +3,6 @@ package model
 import "time"
 
 type User struct {
-    ID           int64     `json:"id"`
     ClickUpID    int64     `json:"clickup_id"`
     DisplayName  string    `json:"display_name"` 
     Name         string    `json:"name"`

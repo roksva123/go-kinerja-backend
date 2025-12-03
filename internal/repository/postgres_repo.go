@@ -100,21 +100,18 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
         );`,
         `CREATE TABLE IF NOT EXISTS users (
-         id BIGSERIAL PRIMARY KEY,
-         clickup_id TEXT UNIQUE,
-         username TEXT,
+         clickup_id BIGINT PRIMARY KEY,
          name TEXT,
+         username TEXT,
          email TEXT,
          password TEXT,
          role TEXT,
-         color TEXT,
          created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
          updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
         );`,
         `CREATE TABLE IF NOT EXISTS members (
             id BIGSERIAL PRIMARY KEY,
             clickup_id TEXT UNIQUE,
-            username TEXT,
             name TEXT,
             email TEXT,
             color TEXT,
@@ -206,8 +203,8 @@ func (r *PostgresRepo) GetAdminByUsername(ctx context.Context, username string) 
 
 
 // Get admin by username
-func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) {
-    query := `SELECT id, username, name, role, created_at, updated_at FROM users ORDER BY id`
+func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) { // Tetap ada, tapi tidak lagi digunakan secara luas
+    query := `SELECT clickup_id, username, name, role, created_at, updated_at FROM users ORDER BY username`
 
     rows, err := r.DB.QueryContext(ctx, query)
     if err != nil {
@@ -219,7 +216,7 @@ func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) {
     for rows.Next() {
         var u model.User
         if err := rows.Scan(
-            &u.ID, &u.DisplayName, &u.Name, &u.Role,
+            &u.ClickUpID, &u.DisplayName, &u.Name, &u.Role,
             &u.CreatedAt, &u.UpdatedAt,
         ); err != nil {
             return nil, err
@@ -253,28 +250,26 @@ func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID st
 
 // UpsertUser
 func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
-    _, err := r.DB.ExecContext(ctx, `
-        VALUES ($1, $1, $2, $3, $4, $5, $6, now())
-        ON CONFLICT (id) DO UPDATE SET
+	_, err := r.DB.ExecContext(ctx, `
+        INSERT INTO users (clickup_id, username, name, email, role)
+        VALUES ($1, $2, $2, $3, $4)
+        ON CONFLICT (clickup_id) DO UPDATE SET
             username = EXCLUDED.username,
-            name = EXCLUDED.name,
+            name = EXCLUDED.username,
             email = EXCLUDED.email,
-            password = COALESCE(EXCLUDED.password, users.password),
             role = EXCLUDED.role,
-            color = EXCLUDED.color,
             updated_at = now()
     `,
-        u.ID,
-        u.DisplayName,
-        u.Name,
-        u.Email        u.Role,
-        u.Color,
-    )
-    return err
+		u.ClickUpID,
+		u.DisplayName,
+		u.Email,
+		u.Role,
+	)
+	return err
 }
 
 
-// UpsertMember (if you want members separate)
+// UpsertMember 
 func (r *PostgresRepo) UpsertMember(ctx context.Context, clickupID, username, name, email, color, teamID string) error {
     _, err := r.DB.ExecContext(ctx, `
         INSERT INTO members (clickup_id, username, name, email, color, team_id)
@@ -337,15 +332,14 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
 
 func (r *PostgresRepo) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
     query := `
-        SELECT id, username, email, role, color 
+        SELECT clickup_id, username, email, role
         FROM users
         WHERE email = $1
         LIMIT 1
     `
 
     var u model.User
-    err := r.DB.QueryRowContext(ctx, query, email).Scan(
-        &u.ID,
+    err := r.DB.QueryRowContext(ctx, query, email).Scan(&u.ClickUpID,
         &u.DisplayName,
         &u.Email,
         &u.Role,
@@ -468,7 +462,7 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
 
 // GetMembers
 func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
-    q := `SELECT id, username, name, email, role, color, created_at, updated_at FROM users ORDER BY name`
+    q := `SELECT clickup_id, username, name, email, role, created_at, updated_at FROM users ORDER BY name`
     rows, err := r.DB.QueryContext(ctx, q)
     if err != nil {
         return nil, err
@@ -477,7 +471,7 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     var out []model.User
     for rows.Next() {
         var u model.User
-        if err := rows.Scan(&u.ID, &u.DisplayName, &u.Name, &u.Email, &u.Role, &u.Color, &u.CreatedAt, &u.UpdatedAt); err != nil {
+        if err := rows.Scan(&u.ClickUpID, &u.DisplayName, &u.Name, &u.Email, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
             return nil, err
         }
         out = append(out, u)
@@ -1032,7 +1026,7 @@ func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate 
 func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([]model.WorkloadUser, error) {
     query := `
         SELECT 
-            u.id AS user_id,
+            u.clickup_id AS user_id,
             u.username,
             u.email,
             u.role,
@@ -1042,12 +1036,12 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
             (
                 SELECT COUNT(*) 
                 FROM tasks tt 
-                WHERE tt.assignee_user_id = u.id
+                WHERE tt.assignee_user_id = u.clickup_id
                   AND tt.date_closed BETWEEN $1 AND $2
             ) AS total_tasks
         FROM users u
         LEFT JOIN tasks t 
-            ON t.assignee_user_id = u.id
+            ON t.assignee_user_id = u.clickup_id
            AND t.date_closed BETWEEN $1 AND $2
         GROUP BY u.id, u.username, u.email, u.role, u.color
         ORDER BY u.username ASC;

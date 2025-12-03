@@ -18,7 +18,7 @@ func NewEmployeeService(db *gorm.DB) *EmployeeService {
 func (s *EmployeeService) SyncEmployee(user model.User) error {
 
 	emp := model.Employee{
-		ID:       strconv.FormatInt(user.ID, 10), 
+		ID:       strconv.FormatInt(user.ClickUpID, 10),
 		Name: user.Name,
 		Email:    user.Email,
 		Color:    "", 

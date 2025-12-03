@@ -19,7 +19,6 @@ func NewWorkloadService(repo *repository.PostgresRepo) *WorkloadService {
 	}
 }
 
-// Hitung jumlah hari kerja
 func workingDaysBetween(start, end time.Time) int {
 	if end.Before(start) {
 		return 0

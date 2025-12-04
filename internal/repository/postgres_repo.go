@@ -147,8 +147,7 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
     );`,
     `CREATE INDEX IF NOT EXISTS idx_tasks_start_date ON tasks(start_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
-     CREATE INDEX IF NOT EXISTS idx_tasks_status_name ON tasks(status_name);
-     CREATE INDEX IF NOT EXISTS idx_tasks_assignee_username ON tasks(assignee_username);`,
+     CREATE INDEX IF NOT EXISTS idx_tasks_status_name ON tasks(status_name);`,
     `CREATE TABLE IF NOT EXISTS tags (
     id BIGSERIAL PRIMARY KEY,
     task_id TEXT,

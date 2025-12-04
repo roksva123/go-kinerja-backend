@@ -582,21 +582,72 @@ func toIntPtr(v interface{}) *int64 {
 	return nil
 }
 
+func (s *ClickUpService) SyncSpacesAndFolders(ctx context.Context) error {
+	if s.TeamID == "" {
+		return errors.New("team id not configured")
+	}
+
+	// 1. Sync Spaces
+	spacesURL := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/space", s.TeamID)
+	log.Println("[REQUEST] Syncing Spaces:", spacesURL)
+	spaceBytes, err := s.doRequest(ctx, "GET", spacesURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch spaces: %w", err)
+	}
+
+	var spacesResponse struct {
+		Spaces []model.SpaceInfo `json:"spaces"`
+	}
+	if err := json.Unmarshal(spaceBytes, &spacesResponse); err != nil {
+		return fmt.Errorf("failed to parse spaces response: %w", err)
+	}
+
+	log.Printf("Found %d spaces. Syncing folders for each space...", len(spacesResponse.Spaces))
+
+	// 2. Sync Folders for each Space
+	for _, space := range spacesResponse.Spaces {
+		foldersURL := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/folder", space.ID)
+		log.Println("[REQUEST] Syncing Folders for Space", space.ID, ":", foldersURL)
+		folderBytes, err := s.doRequest(ctx, "GET", foldersURL)
+		if err != nil {
+			log.Printf("Could not fetch folders for space %s: %v", space.ID, err)
+			continue // Lanjutkan ke space berikutnya jika ada error
+		}
+
+		var foldersResponse struct {
+			Folders []model.Folder `json:"folders"`
+		}
+		if err := json.Unmarshal(folderBytes, &foldersResponse); err != nil {
+			log.Printf("Could not parse folders for space %s: %v", space.ID, err)
+			continue
+		}
+		log.Printf("Space %s has %d folders.", space.ID, len(foldersResponse.Folders))
+		// Di sini Anda bisa menambahkan logika untuk menyimpan data folder ke database jika diperlukan
+		// Contoh: s.Repo.UpsertFolders(ctx, foldersResponse.Folders)
+	}
+
+	return nil
+}
+
 func (s *ClickUpService) AllSync(ctx context.Context) error {
-
+	log.Println("--- STARTING FULL SYNC ---")
     if err := s.SyncTeam(ctx); err != nil {
-        return err
-    }
-
+		return fmt.Errorf("error syncing team: %w", err)
+	}
+	log.Println("✅ Teams synced successfully.")
+	if err := s.SyncSpacesAndFolders(ctx); err != nil {
+		return fmt.Errorf("error syncing spaces and folders: %w", err)
+	}
+	log.Println("✅ Spaces and Folders synced successfully.")
     if err := s.SyncMembers(ctx); err != nil {
-        return err
-    }
-
-    _, err := s.SyncTasks(ctx)
-    if err != nil {
-        return err
-    }
-
+		return fmt.Errorf("error syncing members: %w", err)
+	}
+	log.Println("✅ Members synced successfully.")
+	if _, err := s.SyncTasks(ctx); err != nil {
+		return fmt.Errorf("error syncing tasks: %w", err)
+	}
+	log.Println("✅ Tasks synced successfully.")
+	log.Println("--- FULL SYNC COMPLETED ---")
     return nil
 }
 
@@ -646,78 +697,58 @@ func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) 
     }
     defer rows.Close()
 
-    // Langkah 2: Kelompokkan tugas berdasarkan pengguna dan tugas
     userMap := make(map[int64]*model.WorkloadUser)
-    taskMap := make(map[string]*model.TaskDetail)
 
     for rows.Next() {
         var taskID, taskName, statusName string
         var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
-        var assigneeID int64
-        var assigneeName, assigneeUsername, assigneeEmail, assigneeRole string
+        var userID int64
+        var userName, userUsername, userEmail, userRole string
 
         err := rows.Scan(
             &taskID, &taskName, &statusName,
             &startDate, &dueDate, &dateDone, &timeSpentMs,
-            &assigneeID, &assigneeName, &assigneeUsername, &assigneeEmail, &assigneeRole,
+            &userID, &userName, &userUsername, &userEmail, &userRole,
         )
         if err != nil {
             return nil, fmt.Errorf("error scanning workload row: %w", err)
         }
 
-        // Buat atau dapatkan user dari map
-        if _, ok := userMap[assigneeID]; !ok {
-            userMap[assigneeID] = &model.WorkloadUser{
-                UserID:        assigneeID,
-                Name:          assigneeName,
-                Username:      assigneeUsername,
-                Email:         assigneeEmail,
-                Role:          assigneeRole,
+        // Cari atau buat entri pengguna di map
+        user, ok := userMap[userID]
+        if !ok {
+            user = &model.WorkloadUser{
+                UserID:        userID,
+                Name:          userName,
+                Username:      userUsername,
+                Email:         userEmail,
+                Role:          userRole,
                 Tasks:         []model.TaskDetail{},
                 ByStatus:      make(map[string]float64),
                 ByCategory:    make(map[string]float64),
                 StandardHours: 8.0,
             }
+            userMap[userID] = user
         }
 
-        // Buat atau dapatkan task dari map untuk menghindari duplikasi task
-        task, taskExists := taskMap[taskID]
-        if !taskExists {
-            task = &model.TaskDetail{
-                ID:         taskID,
-                Name:       taskName,
-                StatusName: normalizeStatus(statusName),
-                StartDate:  msToDateString(toInt64Ptr(startDate)),
-                DueDate:    msToDateString(toInt64Ptr(dueDate)),
-                DateDone:   msToDateString(toInt64Ptr(dateDone)),
-                Assignees:  []model.AssigneeDetail{},
-            }
-            if timeSpentMs.Valid {
-                task.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
-            }
-            taskMap[taskID] = task
+        // Buat detail tugas
+        task := model.TaskDetail{
+            ID:         taskID,
+            Name:       taskName,
+            StatusName: normalizeStatus(statusName),
+            StartDate:  msToDateString(toInt64Ptr(startDate)),
+            DueDate:    msToDateString(toInt64Ptr(dueDate)),
+            DateDone:   msToDateString(toInt64Ptr(dateDone)),
+            Assignees:  []model.AssigneeDetail{{ClickUpID: userID, Name: userName, Username: userUsername, Email: userEmail}},
+        }
+        if timeSpentMs.Valid {
+            task.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
         }
 
-        // Tambahkan assignee ke task
-        task.Assignees = append(task.Assignees, model.AssigneeDetail{
-            ClickUpID: assigneeID,
-            Name:      assigneeName,
-            Username:  assigneeUsername,
-            Email:     assigneeEmail,
-        })
+        // Tambahkan tugas ke pengguna yang sesuai dan perbarui total jam
+        user.Tasks = append(user.Tasks, task)
+        user.TotalHours += task.TimeSpentHours
     }
-
-    // Langkah 3: Distribusikan tugas ke setiap user yang terlibat
-    for _, task := range taskMap {
-        for _, assignee := range task.Assignees {
-            if user, ok := userMap[assignee.ClickUpID]; ok {
-                user.Tasks = append(user.Tasks, *task)
-                user.TotalHours += task.TimeSpentHours
-            }
-        }
-    }
-
-    // Langkah 4: Siapkan hasil akhir
     var result []model.WorkloadUser
     for _, user := range userMap {
         user.TaskCount = len(user.Tasks)
@@ -741,12 +772,14 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		SELECT
 			t.id,
 			t.name,
+			t.description,
+			t.text_content,
 			t.status_name,
 			t.start_date,
 			t.due_date,
 			t.date_done,
 			t.time_spent_ms,
-			t.id as task_id_for_join 
+			t.time_estimate
 		FROM tasks t
 		WHERE
 			(t.start_date <= $2 AND t.due_date >= $1)
@@ -764,19 +797,20 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	var taskOrder []string
 	log.Println("--- Scanning Tasks By Range ---")
 	for rows.Next() {
-		var taskID, taskName, statusName string
-		var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
-		var taskIDForJoin string
+		var taskID, taskName, statusName, description, textContent string
+		var startDate, dueDate, dateDone, timeSpentMs, timeEstimate sql.NullInt64
 
 		err := rows.Scan(
 			&taskID,
 			&taskName,
+			&description,
+			&textContent,
 			&statusName,
 			&startDate,
 			&dueDate,
 			&dateDone,
 			&timeSpentMs,
-			&taskIDForJoin,
+			&timeEstimate,
 		)
 		if err != nil {
 			log.Printf("Error scanning task row: %v", err)
@@ -784,17 +818,23 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		}
 
 		taskDetail := model.TaskDetail{
-			ID:         taskID,
-			Name:       taskName,
-			StatusName: statusName,
-			StartDate:  msToDateString(toInt64Ptr(startDate)),
-			DueDate:    msToDateString(toInt64Ptr(dueDate)),
-			DateDone:   msToDateString(toInt64Ptr(dateDone)),
-			Assignees:  []model.AssigneeDetail{},
+			ID:          taskID,
+			Name:        taskName,
+			Description: description,
+			TextContent: textContent,
+			StatusName:  statusName,
+			StartDate:   msToDateString(toInt64Ptr(startDate)),
+			DueDate:     msToDateString(toInt64Ptr(dueDate)),
+			DateDone:    msToDateString(toInt64Ptr(dateDone)),
+			Assignees:   []model.AssigneeDetail{},
 		}
 
 		if timeSpentMs.Valid {
 			taskDetail.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
+		}
+
+		if timeEstimate.Valid {
+			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
 		}
 
 		if _, exists := taskMap[taskID]; !exists {
@@ -804,7 +844,6 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	}
 	rows.Close()
 
-	// Langkah 2: Ambil semua assignee untuk tugas-tugas yang ditemukan
 	assigneeQuery := `
 		SELECT ta.task_id, u.clickup_id, u.username, u.email, u.name
 		FROM task_assignees ta
@@ -830,8 +869,6 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			task.Assignees = append(task.Assignees, assignee)
 		}
 	}
-
-	// Langkah 3: Susun hasil akhir sesuai urutan
 	var result []model.TaskDetail
 	for _, taskID := range taskOrder {
 		result = append(result, *taskMap[taskID])

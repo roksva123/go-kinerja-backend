@@ -48,15 +48,9 @@ func main() {
     cfg.ClickUpTeamID, 
     repo.DB,           
 )
-	workloadSvc := service.NewWorkloadService(repo)
-	// authSvc := service.NewAuthService
-
-	// HANDLERS (constructor diperbaiki)
+	workloadSvc := service.NewWorkloadService(repo, clickSvc)
 	clickupHandler := handlers.NewClickUpHandler(clickSvc)
-	workloadHandler := &handlers.WorkloadHandler{
-		Svc:      workloadSvc,
-		ClickSvc: clickSvc,
-	}
+	workloadHandler := handlers.NewWorkloadHandler(workloadSvc, clickSvc)
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)          
 
 
@@ -81,6 +75,7 @@ func main() {
 		clickup.POST("/sync/members", clickupHandler.SyncMembers)
 		clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
 		clickup.POST("/fullsync", clickupHandler.FullSync)
+		clickup.POST("/sync-all", clickupHandler.SyncAll)
 
 		clickup.GET("/teams", clickupHandler.GetTeams)
 		clickup.GET("/members", clickupHandler.GetMembers)
@@ -94,7 +89,6 @@ func main() {
 
 	}
 
-	// WORKLOAD ROUTES
 	work := api.Group("/workload")
 	{
 		work.POST("/sync", workloadHandler.SyncAll)

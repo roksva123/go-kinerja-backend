@@ -45,6 +45,15 @@ func (h *ClickUpHandler) SyncTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "tasks synced", "count": n})
 }
 
+func (h *ClickUpHandler) SyncAll(c *gin.Context) {
+	err := h.Click.AllSync(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "full sync completed successfully"})
+}
+
 func (h *ClickUpHandler) GetTasks(c *gin.Context) {
 	tasks, err := h.Click.GetTasks(c.Request.Context())
 	if err != nil {
@@ -188,13 +197,16 @@ type WorkloadHandler struct {
 	ClickSvc *service.ClickUpService
 }
 
-func NewWorkloadHandler(svc *service.WorkloadService) *WorkloadHandler {
-	return &WorkloadHandler{Svc: svc}
+func NewWorkloadHandler(svc *service.WorkloadService, clickSvc *service.ClickUpService) *WorkloadHandler {
+	return &WorkloadHandler{
+		Svc:      svc,
+		ClickSvc: clickSvc,
+	}
 }
 
 func (h *WorkloadHandler) GetWorkload(c *gin.Context) {
-	startStr := c.Query("start") // e.g., "2025-01-01"
-	endStr := c.Query("end")     // e.g., "2025-07-01"
+	startStr := c.Query("start") 
+	endStr := c.Query("end")     
 
 	layout := "2006-01-02"
 	start, err := time.Parse(layout, startStr)
@@ -254,29 +266,59 @@ func (h *WorkloadHandler) AllSync(c *gin.Context) {
 }
 
 func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
-	startStr := c.Query("start") 
-	endStr := c.Query("end")
+	startStr := c.Query("start_date")
+	endStr := c.Query("end_date")
 
 	layout := "2006-01-02"
-	start, err := time.Parse(layout, startStr)
+	startDate, err := time.Parse(layout, startStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start date format, use YYYY-MM-DD"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start_date format, use YYYY-MM-DD"})
 		return
 	}
-	end, err := time.Parse(layout, endStr)
+	endDate, err := time.Parse(layout, endStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end date format, use YYYY-MM-DD"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end_date format, use YYYY-MM-DD"})
 		return
 	}
 
-	startMs := start.UnixMilli()
-	endMs := end.UnixMilli()
-
-	tasks, err := h.ClickSvc.GetTasksByRange(c.Request.Context(), startMs, endMs) 
+	assigneesMap, tasksByAssignee, err := h.Svc.GetTasksByRangeGroupedByAssignee(c.Request.Context(), startDate, endDate)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"count": len(tasks), "tasks": tasks})
+	var responseAssignees []AssigneeWithTasks
+	for id, assignee := range assigneesMap {
+		tasksForResponse := make([]TaskInResponse, len(tasksByAssignee[id]))
+		for i, taskDetail := range tasksByAssignee[id] {
+			tasksForResponse[i] = TaskInResponse{
+				ID:                taskDetail.ID,
+				Name:              taskDetail.Name,
+				Description:       taskDetail.Description,
+				TextContent:       taskDetail.TextContent,
+				StatusName:        taskDetail.StatusName,
+				StartDate:         taskDetail.StartDate,
+				DueDate:           taskDetail.DueDate,
+				DateDone:          taskDetail.DateDone,
+				TimeEstimateHours: taskDetail.TimeEstimateHours,
+				TimeEstimate:      taskDetail.TimeEstimate,
+				TimeSpentHours:    taskDetail.TimeSpentHours,
+			}
+		}
+
+		responseAssignees = append(responseAssignees, AssigneeWithTasks{
+			ClickupID: int(assignee.ClickUpID),
+			Username:  assignee.Username,
+			Email:     assignee.Email,
+			Name:      assignee.Name,
+			Tasks:     tasksForResponse,
+		})
+	}
+
+	finalResponse := TasksByAssigneeResponse{
+		Count:     len(responseAssignees),
+		Assignees: responseAssignees,
+	}
+
+	c.JSON(http.StatusOK, finalResponse)
 }

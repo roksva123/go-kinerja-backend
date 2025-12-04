@@ -29,11 +29,15 @@ type AssigneeDetail struct {
 type TaskDetail struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
+	Description     string   `json:"description,omitempty"`
+	TextContent     string   `json:"text_content,omitempty"`
 	StatusName      string   `json:"status_name"`
 	StartDate       *string  `json:"start_date"`
 	DueDate         *string  `json:"due_date"`
 	DateDone        *string  `json:"date_done,omitempty"`
-	TimeSpentHours  float64  `json:"time_spent_hours"`
+	TimeEstimateHours  float64  `json:"time_estimate_hours"`
+    TimeEstimate    float64  `json:"time_estimate"`
+    TimeSpentHours  float64  `json:"time_spent_hours"`
 	Assignees       []AssigneeDetail `json:"assignees"`
 }
 

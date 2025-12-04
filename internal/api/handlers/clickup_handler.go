@@ -301,7 +301,6 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				DueDate:           taskDetail.DueDate,
 				DateDone:          taskDetail.DateDone,
 				TimeEstimateHours: taskDetail.TimeEstimateHours,
-				TimeEstimate:      taskDetail.TimeEstimate,
 				TimeSpentHours:    taskDetail.TimeSpentHours,
 			}
 		}

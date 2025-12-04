@@ -133,8 +133,13 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 				ClickUpID:   member.User.ID,
 				Name: member.User.Username,
 				Email:       member.User.Email,
-				Status:      "Aktif",
-				Role:        "member", 
+				Status:      "aktif", 
+				Role:        "backend", 
+			}
+			if member.Role == 2 {
+				u.Role = "pm" 
+			} else if member.Role == 4 {
+				u.Role = "frontend"
 			}
 
 			if err := s.Repo.UpsertUser(ctx, u); err != nil {
@@ -165,6 +170,14 @@ func anyToInt64Ptr(v interface{}) *int64 {
     return parseInt64Ptr(v)
 }
 
+// Helper untuk konversi milidetik (int64) ke *time.Time
+func msToTimePtr(ms *int64) *time.Time {
+	if ms == nil {
+		return nil
+	}
+	t := time.UnixMilli(*ms)
+	return &t
+}
 
 // SyncTasks
 func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
@@ -241,12 +254,12 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
             log.Printf("Status: %+v\n", t.Status)
 
             // Dates
-            t.DateDone = parseInt64Ptr(raw["date_done"])
-            t.DateClosed = parseInt64Ptr(raw["date_closed"])
-            t.DateCreated = parseInt64Ptr(raw["date_created"])
-            t.DateUpdated = parseInt64Ptr(raw["date_updated"])
-            t.StartDate = parseInt64Ptr(raw["start_date"])
-            t.DueDate = parseInt64Ptr(raw["due_date"])
+            t.DateDone = msToTimePtr(parseInt64Ptr(raw["date_done"]))
+            t.DateClosed = msToTimePtr(parseInt64Ptr(raw["date_closed"]))
+            t.DateCreated = msToTimePtr(parseInt64Ptr(raw["date_created"]))
+            t.DateUpdated = msToTimePtr(parseInt64Ptr(raw["date_updated"]))
+            t.StartDate = msToTimePtr(parseInt64Ptr(raw["start_date"]))
+            t.DueDate = msToTimePtr(parseInt64Ptr(raw["due_date"]))
             t.TimeSpentMs = parseInt64Ptr(raw["time_spent"]) 
 
             if t.StartDate == nil {
@@ -254,8 +267,6 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                 log.Printf("StartDate is nil, using DateCreated (%v) instead.", t.DateCreated)
             }
             if t.DueDate == nil {
-                
-                fmt.Println(t.DueDate)
                 t.DueDate = t.StartDate 
                 if t.DateDone != nil {
                     t.DueDate = t.DateDone
@@ -275,12 +286,12 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 
                     // Tanggal Mulai
                     if name == "Tanggal Mulai" {
-                        t.StartDate = anyToInt64Ptr(val)
+                        t.StartDate = msToTimePtr(anyToInt64Ptr(val))
                     }
 
                     // Tanggal Akhir
                     if name == "Tanggal Akhir" {
-                        t.DueDate = anyToInt64Ptr(val)
+                        t.DueDate = msToTimePtr(anyToInt64Ptr(val))
                     }
                 }
             }
@@ -358,8 +369,9 @@ func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error)
             TaskID:      t.ID,
             TaskName:    t.Name,
             TaskStatus:  t.Status.Name,
-            DateCreated: t.DateClosed,
+            DateCreated: t.DateCreated,
             DateDone:    t.DateDone,
+            DateClosed:  t.DateClosed,
             AssignedTo:  t.Username,
         }
 
@@ -420,11 +432,11 @@ func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.Full
     for _, t := range data {
 
         // convert milliseconds -> jam
-        convert := func(ms *int64) float64 {
-            if ms == nil {
+        convert := func(t *time.Time) float64 {
+            if t == nil {
                 return 0
             }
-            return float64(*ms) / 1000 / 60 / 60
+			return float64(t.UnixMilli()) / 1000 / 60 / 60
         }
 
         fs := model.FullSync{
@@ -490,28 +502,14 @@ func (s *ClickUpService) PullTasks(ctx context.Context) (int, error) {
                 t.Status.Name = safeString(st["name"])
                 t.Status.Type = safeString(st["type"])
                 t.Status.Color = safeString(st["color"])
-                t.DateCreated = toIntPtr(raw["date_created"])
             }
 
-            // helper to parse int64 from either string/float
-            toIntPtr := func(x interface{}) *int64 {
-                if x == nil { return nil }
-                switch v := x.(type) {
-                case string:
-                    if v == "" { return nil }
-                    if n, err := strconv.ParseInt(v, 10, 64); err == nil { return &n }
-                case float64:
-                    n := int64(v); return &n
-                case int64:
-                    n := v; return &n
-                }
-                return nil
-            }
-
-            t.DateDone = toIntPtr(raw["date_done"])
-            t.DateClosed = toIntPtr(raw["date_closed"])
-            t.StartDate = toIntPtr(raw["start_date"])
-            t.DueDate = toIntPtr(raw["due_date"])
+            // Dates
+            t.DateCreated = msToTimePtr(toIntPtr(raw["date_created"]))
+            t.DateDone = msToTimePtr(toIntPtr(raw["date_done"]))
+            t.DateClosed = msToTimePtr(toIntPtr(raw["date_closed"]))
+            t.StartDate = msToTimePtr(toIntPtr(raw["start_date"]))
+            t.DueDate = msToTimePtr(toIntPtr(raw["due_date"]))
             t.TimeEstimate = toIntPtr(raw["time_estimate"])
 
             // assignee first
@@ -681,14 +679,15 @@ func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) 
             u.clickup_id,
             u.name,
             u.username,
-            u.email,
-            u.role
+            u.email, 
+            COALESCE(r.name, '') as role
         FROM tasks t
         JOIN task_assignees ta ON t.id = ta.task_id
         JOIN users u ON ta.user_clickup_id = u.clickup_id
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE
-            (t.start_date <= $2 AND t.due_date >= $1) OR
-            (t.date_done >= $1 AND t.date_done <= $2)
+            (t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0)) OR
+            (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0))
         ORDER BY u.name, t.start_date
     `
     rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
@@ -782,10 +781,10 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			t.time_estimate
 		FROM tasks t
 		WHERE
-			(t.start_date <= $2 AND t.due_date >= $1)
-			OR (t.date_done >= $1 AND t.date_done <= $2)
+			(t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0))
+			OR (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0))
 	`
-	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
+	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs) 
 
 	if err != nil {
 		log.Printf("Error querying tasks by range: %v", err)
@@ -798,7 +797,8 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	log.Println("--- Scanning Tasks By Range ---")
 	for rows.Next() {
 		var taskID, taskName, statusName, description, textContent string
-		var startDate, dueDate, dateDone, timeSpentMs, timeEstimate sql.NullInt64
+		var startDate, dueDate, dateDone sql.NullTime
+		var timeSpentMs, timeEstimate sql.NullInt64
 
 		err := rows.Scan(
 			&taskID,
@@ -823,9 +823,9 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			Description: description,
 			TextContent: textContent,
 			StatusName:  statusName,
-			StartDate:   msToDateString(toInt64Ptr(startDate)),
-			DueDate:     msToDateString(toInt64Ptr(dueDate)),
-			DateDone:    msToDateString(toInt64Ptr(dateDone)),
+			StartDate:   nullTimeToDateString(startDate),
+			DueDate:     nullTimeToDateString(dueDate),
+			DateDone:    nullTimeToDateString(dateDone),
 			Assignees:   []model.AssigneeDetail{},
 		}
 
@@ -835,6 +835,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 
 		if timeEstimate.Valid {
 			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
+			// taskDetail.TimeEstimate sudah tidak ada, jadi baris ini bisa dihapus jika ada
 		}
 
 		if _, exists := taskMap[taskID]; !exists {
@@ -876,6 +877,14 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 
 	log.Printf("--- Found a total of %d tasks in range ---", len(result))
 	return result, nil
+}
+
+func nullTimeToDateString(nt sql.NullTime) *string {
+	if !nt.Valid {
+		return nil
+	}
+	s := nt.Time.Format("2006-01-02")
+	return &s
 }
 
 func toInt64Ptr(ni sql.NullInt64) *int64 {

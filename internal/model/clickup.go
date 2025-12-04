@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type TaskStatus struct {
 	ID    string `json:"id"`
@@ -104,20 +107,24 @@ func ParseClickUpTask(raw map[string]interface{}) *TaskResponse {
 		}
 	}
 
+	msToTimePtr := func(ms int64) *time.Time {
+		if ms == 0 {
+			return nil
+		}
+		t := time.UnixMilli(ms)
+		return &t
+	}
+
 	if v, ok := raw["date_done"].(string); ok && v != "" {
-		parsed := parseInt64(v)
-		t.DateDone = &parsed
+		t.DateDone = msToTimePtr(parseInt64(v))
 	} else if v, ok := raw["date_done"].(float64); ok {
-		x := int64(v)
-		t.DateDone = &x
+		t.DateDone = msToTimePtr(int64(v))
 	}
 
 	if v, ok := raw["date_closed"].(string); ok && v != "" {
-		parsed := parseInt64(v)
-		t.DateClosed = &parsed
+		t.DateClosed = msToTimePtr(parseInt64(v))
 	} else if v, ok := raw["date_closed"].(float64); ok {
-		x := int64(v)
-		t.DateClosed = &x
+		t.DateClosed = msToTimePtr(int64(v))
 	}
 
 	return t
@@ -172,4 +179,3 @@ func parseInt64(s string) int64 {
 func intToString(v float64) string {
 	return fmt.Sprintf("%.0f", v)
 }
-

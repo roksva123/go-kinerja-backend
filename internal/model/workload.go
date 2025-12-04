@@ -36,7 +36,6 @@ type TaskDetail struct {
 	DueDate         *string  `json:"due_date"`
 	DateDone        *string  `json:"date_done,omitempty"`
 	TimeEstimateHours  float64  `json:"time_estimate_hours"`
-    TimeEstimate    float64  `json:"time_estimate"`
     TimeSpentHours  float64  `json:"time_spent_hours"`
 	Assignees       []AssigneeDetail `json:"assignees"`
 }

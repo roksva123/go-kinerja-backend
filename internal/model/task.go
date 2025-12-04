@@ -14,8 +14,8 @@ type Task struct {
 		Type  string `json:"type"`
 		Color string `json:"color"`
 	} `json:"status"`
-	DateDone   *int64 `json:"date_done,omitempty"`
-	DateClosed *int64 `json:"date_closed,omitempty"`
+	DateDone   *time.Time `json:"date_done,omitempty"`
+	DateClosed *time.Time `json:"date_closed,omitempty"`
 
 	Username string `json:"username"`
 	Email    string `json:"email"`
@@ -24,10 +24,10 @@ type Task struct {
 	TimeEstimateMs *int64 `json:"time_estimate_ms,omitempty"`
 	TimeSpentMs    *int64 `json:"time_spent_ms,omitempty"`
 
-	StartDate    *int64 `json:"start_date"`
-	DueDate      *int64 `json:"due_date"`
-	DateCreated  *int64 `json:"date_created"`
-	TimeEstimate *int64 `json:"time_estimate"`
+	StartDate    *time.Time `json:"start_date"`
+	DueDate      *time.Time `json:"due_date"`
+	DateCreated  *time.Time `json:"date_created"`
+	TimeEstimate *int64 `json:"-"` // Internal use only
 
 	AssigneeUserID    *int64 `json:"assignee_user_id"`
 	AssigneeClickUpID *int64 `json:"assignee_id"`
@@ -46,12 +46,13 @@ type TaskWithMember struct {
 	TaskStatusType  string `json:"status_type"`
 	TaskStatusColor string `json:"status_color"`
 
-	StartDate    *int64 `json:"start_date"`
-	DueDate      *int64 `json:"due_date"`
-	DateCreated  *int64 `json:"date_created"`
-	DateDone     *int64 `json:"date_done"`
-	DateClosed   *int64 `json:"date_closed"`
-	TimeEstimate *int64 `json:"time_estimate"`
+	StartDate    *time.Time `json:"start_date"`
+	DueDate      *time.Time `json:"due_date"`
+	DateCreated  *time.Time `json:"date_created"`
+	DateDone     *time.Time `json:"date_done"`
+	DateClosed   *time.Time `json:"date_closed"`
+	TimeEstimate *int64 `json:"-"` // Internal use only
+	TimeEstimateHours float64 `json:"time_estimate_hours"`
 	TimeSpent    *int64 `json:"time_spent"`
 
 	UserID   int64  `json:"user_id,omitempty"`
@@ -71,12 +72,12 @@ type TaskFull struct {
 	StatusName   string `json:"status_name"`
 	StatusType   string `json:"status_type"`
 	StatusColor  string `json:"status_color"`
-	StartDate    *int64 `json:"start_date"`
-	DueDate      *int64 `json:"due_date"`
-	DateDone     *int64 `json:"date_done"`
-	DateClosed   *int64 `json:"date_closed"`
-	TimeEstimate *int64 `json:"time_estimate"`
-	TimeSpent    *int64 `json:"time_spent"`
+	StartDate    *time.Time `json:"start_date"`
+	DueDate      *time.Time `json:"due_date"`
+	DateDone     *time.Time `json:"date_done"`
+	DateClosed   *time.Time `json:"date_closed"`
+	TimeEstimateHours float64 `json:"time_estimate_hours"`
+	TimeSpentHours    float64 `json:"time_spent_hours"`
 
 	// Member
 	UserID   *int64  `json:"user_id"`
@@ -112,13 +113,10 @@ type TaskItem struct {
 
 type TaskResponse struct {
     ID          string  `json:"id"`
-    TaskID      string  `json:"task_id"`
-	CustomID    string  `json:"costom"`
-	CustomItemID  int64 `json:"custom_item_id"`
+    TaskID      string  `json:"task_id,omitempty"`
     Name        string  `json:"name"`
     TextContent string  `json:"text_content"`
     Description string  `json:"description"`
-	Category string `json:"category"`
 
     Status struct {
         ID    string `json:"id"`
@@ -127,8 +125,8 @@ type TaskResponse struct {
         Color string `json:"color"`
     } `json:"status"`
 
-    DateDone   *int64 `json:"date_done,omitempty"`
-    DateClosed *int64 `json:"date_closed,omitempty"`
+    DateDone   *time.Time `json:"date_done,omitempty"`
+    DateClosed *time.Time `json:"date_closed,omitempty"`
 
     Username string `json:"username"`
     Email    string `json:"email"`
@@ -137,14 +135,14 @@ type TaskResponse struct {
     TimeEstimateMs *int64 `json:"time_estimate_ms,omitempty"`
     TimeSpentMs    *int64 `json:"time_spent_ms,omitempty"`
 
-    StartDate    *int64 `json:"start_date"`
-    DueDate      *int64 `json:"due_date"`
-    DateCreated  *int64 `json:"date_created"`
-	DateUpdated  *int64 `json:"date_updated"`
-    TimeEstimate *int64 `json:"time_estimate"`
+    StartDate    *time.Time `json:"start_date"`
+    DueDate      *time.Time `json:"due_date"`
+    DateCreated  *time.Time `json:"date_created"`
+	DateUpdated  *time.Time `json:"date_updated"`
+    TimeEstimate *int64 `json:"-"` // Disembunyikan dari JSON, hanya untuk proses internal
 	Assignees     []TaskAssignee  `json:"assignees"`
 
-	AssigneeClickUpID *string `json:"assignee_clickup_id"`
+	AssigneeClickUpID *int64 `json:"assignee_clickup_id"`
     AssigneeUserID   *int64 `json:"assignee_user_id"`
     AssigneeID       *int64 `json:"assignee_id"`
 	AssigneeColor    *string `json:"assignee_color"`

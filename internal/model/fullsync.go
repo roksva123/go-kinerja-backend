@@ -1,14 +1,16 @@
 
 package model
 
+import "time"
+
 type FullSync struct {
     TaskID       string  `json:"task_id"`
     TaskName     string  `json:"task_name"`
     TaskStatus   string  `json:"task_status"`
 
-    DateCreated  *int64 `json:"date_created"`
-    DateDone     *int64 `json:"date_done"`
-    DateClosed   *int64 `json:"date_closed"`
+    DateCreated  *time.Time `json:"date_created"`
+    DateDone     *time.Time `json:"date_done"`
+    DateClosed   *time.Time `json:"date_closed"`
 
     HoursCreated float64 `json:"hours_created"`
     HoursDone    float64 `json:"hours_done"`

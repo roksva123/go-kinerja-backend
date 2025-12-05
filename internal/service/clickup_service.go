@@ -400,6 +400,10 @@ func (s *ClickUpService) GetTeams(ctx context.Context) ([]model.Team, error) {
     return s.Repo.GetTeams(ctx)
 }
 
+func (s *ClickUpService) GetLists(ctx context.Context) ([]model.List, error) {
+	return s.Repo.GetLists(ctx)
+}
+
 func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.FullSyncFilter) ([]model.FullSync, error) {
     now := time.Now()
 
@@ -580,6 +584,27 @@ func toIntPtr(v interface{}) *int64 {
 	return nil
 }
 
+func (s *ClickUpService) SyncFolders(ctx context.Context, spaceID string) error {
+	foldersURL := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/folder", spaceID)
+	folderBytes, err := s.doRequest(ctx, "GET", foldersURL)
+	if err != nil {
+		return fmt.Errorf("could not fetch folders for space %s: %w", spaceID, err)
+	}
+
+	var foldersResponse struct {
+		Folders []model.Folder `json:"folders"`
+	}
+	if err := json.Unmarshal(folderBytes, &foldersResponse); err != nil {
+		return fmt.Errorf("could not parse folders for space %s: %w", spaceID, err)
+	}
+
+	for _, folder := range foldersResponse.Folders {
+		if err := s.Repo.UpsertFolder(ctx, &folder); err != nil {
+			log.Printf("Failed to upsert folder %s: %v", folder.ID, err)
+		}
+	}
+	return nil
+}
 func (s *ClickUpService) SyncSpacesAndFolders(ctx context.Context) error {
 	if s.TeamID == "" {
 		return errors.New("team id not configured")
@@ -602,26 +627,64 @@ func (s *ClickUpService) SyncSpacesAndFolders(ctx context.Context) error {
 
 	log.Printf("Found %d spaces. Syncing folders for each space...", len(spacesResponse.Spaces))
 
-	// 2. Sync Folders for each Space
 	for _, space := range spacesResponse.Spaces {
+		if err := s.Repo.UpsertSpace(ctx, &space); err != nil {
+			log.Printf("Failed to upsert space %s: %v", space.ID, err)
+		}
+
 		foldersURL := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/folder", space.ID)
 		log.Println("[REQUEST] Syncing Folders for Space", space.ID, ":", foldersURL)
 		folderBytes, err := s.doRequest(ctx, "GET", foldersURL)
 		if err != nil {
 			log.Printf("Could not fetch folders for space %s: %v", space.ID, err)
-			continue // Lanjutkan ke space berikutnya jika ada error
+			continue 
 		}
 
 		var foldersResponse struct {
 			Folders []model.Folder `json:"folders"`
 		}
 		if err := json.Unmarshal(folderBytes, &foldersResponse); err != nil {
-			log.Printf("Could not parse folders for space %s: %v", space.ID, err)
+			log.Printf("Could not parse folders JSON for space %s: %v", space.ID, err)
 			continue
 		}
-		log.Printf("Space %s has %d folders.", space.ID, len(foldersResponse.Folders))
-		// Di sini Anda bisa menambahkan logika untuk menyimpan data folder ke database jika diperlukan
-		// Contoh: s.Repo.UpsertFolders(ctx, foldersResponse.Folders)
+
+		if len(foldersResponse.Folders) > 0 {
+			log.Printf("Space %s has %d folders. Syncing lists for each folder...", space.ID, len(foldersResponse.Folders))
+			for _, folder := range foldersResponse.Folders {
+				if err := s.Repo.UpsertFolder(ctx, &folder); err != nil {
+					log.Printf("Failed to upsert folder %s: %v", folder.ID, err)
+				}
+
+				listsURL := fmt.Sprintf("https://api.clickup.com/api/v2/folder/%s/list", folder.ID)
+				log.Println("[REQUEST] Syncing Lists for Folder", folder.ID, ":", listsURL)
+				listBytes, err := s.doRequest(ctx, "GET", listsURL)
+				if err != nil {
+					log.Printf("Could not fetch lists for folder %s: %v", folder.ID, err)
+					continue 
+				}
+
+				var listsResponse struct {
+					Lists []model.List `json:"lists"`
+				}
+				if err := json.Unmarshal(listBytes, &listsResponse); err != nil {
+					log.Printf("Could not parse lists JSON for folder %s: %v", folder.ID, err)
+					continue
+				}
+
+				if len(listsResponse.Lists) > 0 {
+					log.Printf("Folder %s has %d lists. Saving to DB...", folder.ID, len(listsResponse.Lists))
+					for i := range listsResponse.Lists {
+						listsResponse.Lists[i].FolderID = folder.ID      // Ini sudah benar
+						listsResponse.Lists[i].SpaceID = folder.Space.ID // Perbaikan di sini
+					}
+					for _, list := range listsResponse.Lists {
+						if err := s.Repo.UpsertList(ctx, &list); err != nil {
+							log.Printf("Failed to upsert list %s for folder %s: %v", list.ID, folder.ID, err)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	return nil

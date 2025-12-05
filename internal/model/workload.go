@@ -17,6 +17,7 @@ type WorkloadUser struct {
     ByStatus      map[string]float64 `json:"by_status"`
     ByCategory    map[string]float64 `json:"by_category"`
     StandardHours float64         `json:"standard_hours"`
+	ExpectedHours float64 `json:"expected_hours"`
 }
 
 type AssigneeDetail struct {

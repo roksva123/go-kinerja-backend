@@ -27,7 +27,7 @@ type Task struct {
 	StartDate    *time.Time `json:"start_date"`
 	DueDate      *time.Time `json:"due_date"`
 	DateCreated  *time.Time `json:"date_created"`
-	TimeEstimate *int64 `json:"-"` // Internal use only
+	TimeEstimate *int64 `json:"-"` 
 
 	AssigneeUserID    *int64 `json:"assignee_user_id"`
 	AssigneeClickUpID *int64 `json:"assignee_id"`
@@ -51,7 +51,7 @@ type TaskWithMember struct {
 	DateCreated  *time.Time `json:"date_created"`
 	DateDone     *time.Time `json:"date_done"`
 	DateClosed   *time.Time `json:"date_closed"`
-	TimeEstimate *int64 `json:"-"` // Internal use only
+	TimeEstimate *int64 `json:"-"` 
 	TimeEstimateHours float64 `json:"time_estimate_hours"`
 	TimeSpent    *int64 `json:"time_spent"`
 
@@ -139,7 +139,7 @@ type TaskResponse struct {
     DueDate      *time.Time `json:"due_date"`
     DateCreated  *time.Time `json:"date_created"`
 	DateUpdated  *time.Time `json:"date_updated"`
-    TimeEstimate *int64 `json:"-"` // Disembunyikan dari JSON, hanya untuk proses internal
+    TimeEstimate *int64 `json:"-"` 
 	Assignees     []TaskAssignee  `json:"assignees"`
 
 	AssigneeClickUpID *int64 `json:"assignee_clickup_id"`

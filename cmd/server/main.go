@@ -51,7 +51,8 @@ func main() {
 	workloadSvc := service.NewWorkloadService(repo, clickSvc)
 	clickupHandler := handlers.NewClickUpHandler(clickSvc)
 	workloadHandler := handlers.NewWorkloadHandler(workloadSvc, clickSvc)
-	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)          
+	syncHandler := handlers.NewSyncHandler(clickSvc)
+	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 
 
 	// ROUTER
@@ -76,6 +77,7 @@ func main() {
 		clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
 		clickup.POST("/fullsync", clickupHandler.FullSync)
 		clickup.POST("/sync-all", clickupHandler.SyncAll)
+		clickup.POST("/sync/spaces-folders-lists", syncHandler.SyncSpacesFoldersAndListsHandler)
 
 		clickup.GET("/teams", clickupHandler.GetTeams)
 		clickup.GET("/members", clickupHandler.GetMembers)
@@ -84,6 +86,7 @@ func main() {
 		clickup.GET("/fullsync/filter", clickupHandler.GetFullSyncFiltered)
 		clickup.POST("/workload/allsync", workloadHandler.AllSync)
 		clickup.GET("/data", clickupHandler.GetFullData)
+		clickup.GET("/lists", syncHandler.GetListsHandler)
 
 
 

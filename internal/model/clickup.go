@@ -42,6 +42,16 @@ type Folder struct {
 	Statuses  []FolderStatus `json:"statuses"`
 }
 
+type List struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Archived bool   `json:"archived"`
+	// Kolom-kolom ini tidak datang dari API secara langsung,
+	// tapi kita isi di service untuk relasi database.
+	FolderID string `json:"-"`
+	SpaceID  string `json:"-"`
+}
+
 type FolderResponse struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`

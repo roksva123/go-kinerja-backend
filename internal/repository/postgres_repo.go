@@ -167,13 +167,30 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
     `CREATE INDEX IF NOT EXISTS idx_tasks_start_date ON tasks(start_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_status_name ON tasks(status_name);`,
+    `CREATE TABLE IF NOT EXISTS folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        archived BOOLEAN DEFAULT FALSE,
+        space_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+    );`,
+    `CREATE TABLE IF NOT EXISTS lists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        archived BOOLEAN DEFAULT FALSE,
+        folder_id TEXT,
+        space_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+    );`,
     `CREATE TABLE IF NOT EXISTS tags (
-    id BIGSERIAL PRIMARY KEY,
-    task_id TEXT,
-    name TEXT,
-    color TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_tags_task_id ON tags(task_id);`,
+		id BIGSERIAL PRIMARY KEY,
+		task_id TEXT,
+		name TEXT,
+		color TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_tags_task_id ON tags(task_id);`,
     `CREATE TABLE IF NOT EXISTS audit_logs (
      id BIGSERIAL PRIMARY KEY,
      action TEXT,
@@ -334,6 +351,44 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
 	return err
 }
 
+func (r *PostgresRepo) UpsertSpace(ctx context.Context, space *model.SpaceInfo) error {
+	query := `
+		INSERT INTO teams (team_id, name)
+		VALUES ($1, $2)
+		ON CONFLICT (team_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			updated_at = now();
+	`
+	_, err := r.DB.ExecContext(ctx, query, space.ID, space.Name)
+	return err
+}
+
+func (r *PostgresRepo) UpsertFolder(ctx context.Context, folder *model.Folder) error {
+	query := `
+		INSERT INTO folders (id, name, space_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			space_id = EXCLUDED.space_id,
+			updated_at = now();
+	`
+	_, err := r.DB.ExecContext(ctx, query, folder.ID, folder.Name, folder.Space.ID)
+	return err
+}
+
+func (r *PostgresRepo) UpsertList(ctx context.Context, list *model.List) error {
+	query := `
+		INSERT INTO lists (id, name, folder_id, space_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			folder_id = EXCLUDED.folder_id,
+			space_id = EXCLUDED.space_id,
+			updated_at = now();
+	`
+	_, err := r.DB.ExecContext(ctx, query, list.ID, list.Name, list.FolderID, list.SpaceID)
+	return err
+}
 
 // UpsertTask
 func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) error { 
@@ -1030,6 +1085,20 @@ func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate 
 }
 
 
+func calculateWorkingDays(start, end time.Time) int {
+	if start.After(end) {
+		return 0
+	}
+
+	workingDays := 0
+	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+		weekday := d.Weekday()
+		if weekday != time.Saturday && weekday != time.Sunday {
+			workingDays++
+		}
+	}
+	return workingDays
+}
 func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([]model.WorkloadUser, error) {
     query := `
         SELECT 
@@ -1038,7 +1107,7 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
             u.email,
             u.role,
             '' as color,
-            COALESCE(SUM(t.time_spent), 0) AS total_ms,
+            COALESCE(SUM(t.time_estimate), 0) AS total_ms,
             COUNT(t.id) AS task_count,
             (
                 SELECT COUNT(*) 
@@ -1060,6 +1129,9 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
     }
     defer rows.Close()
 
+	// Hitung hari kerja dalam rentang waktu, tidak termasuk akhir pekan.
+	workingDays := calculateWorkingDays(start, end)
+	expectedWorkHours := float64(workingDays * 8)
     var out []model.WorkloadUser
     for rows.Next() {
         var u model.WorkloadUser
@@ -1077,6 +1149,7 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
         }
 
         u.TotalHours = float64(u.TotalMs) / 3600000.0
+		u.ExpectedHours = expectedWorkHours
         out = append(out, u)
     }
 
@@ -1138,4 +1211,24 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
     }
 
     return tasks, nil
+}
+
+func (r *PostgresRepo) GetLists(ctx context.Context) ([]model.List, error) {
+	query := `SELECT id, name, archived, folder_id, space_id FROM lists ORDER BY name`
+	rows, err := r.DB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lists []model.List
+	for rows.Next() {
+		var l model.List
+		if err := rows.Scan(&l.ID, &l.Name, &l.Archived, &l.FolderID, &l.SpaceID); err != nil {
+			return nil, err
+		}
+		lists = append(lists, l)
+	}
+
+	return lists, nil
 }

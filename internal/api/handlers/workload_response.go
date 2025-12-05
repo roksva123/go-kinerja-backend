@@ -17,11 +17,13 @@ type TaskInResponse struct {
 
 // AssigneeWithTasks adalah struct untuk menampung data assignee beserta daftar tugasnya.
 type AssigneeWithTasks struct {
-	ClickupID int                `json:"clickup_id"`
-	Username  string             `json:"username"`
-	Email     string             `json:"email"`
-	Name      string             `json:"name"`
-	Tasks     []TaskInResponse   `json:"tasks"`
+	ClickupID       int              `json:"clickup_id"`
+	Username        string           `json:"username"`
+	Email           string           `json:"email"`
+	Name            string           `json:"name"`
+	TotalSpentHours float64          `json:"total_spent_hours"`
+	ExpectedHours   float64          `json:"expected_hours"`
+	Tasks           []TaskInResponse `json:"tasks"`
 }
 
 // TasksByAssigneeResponse adalah struct untuk respons akhir dari endpoint.

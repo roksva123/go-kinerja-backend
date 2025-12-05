@@ -43,11 +43,10 @@ func main() {
 	// SERVICES
 	clickSvc := service.NewClickUpService(
     repo,
-    cfg.ClickUpAPIKey, 
-    cfg.ClickUpToken,  
-    cfg.ClickUpTeamID, 
-    repo.DB,           
-)
+    cfg.ClickUpAPIKey,
+    cfg.ClickUpToken,
+    cfg.ClickUpTeamID,
+	)
 	workloadSvc := service.NewWorkloadService(repo, clickSvc)
 	clickupHandler := handlers.NewClickUpHandler(clickSvc)
 	workloadHandler := handlers.NewWorkloadHandler(workloadSvc, clickSvc)

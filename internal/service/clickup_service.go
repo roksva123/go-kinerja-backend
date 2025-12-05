@@ -24,7 +24,6 @@ type ClickUpService struct {
     Token  string
     TeamID string
     Client *http.Client
-    DB     *sql.DB
 }
 
 func NewClickUpService(
@@ -32,7 +31,6 @@ func NewClickUpService(
     apiKey string,
     token string,
     teamID string,
-    db *sql.DB,
 ) *ClickUpService {
 
     return &ClickUpService{
@@ -41,7 +39,6 @@ func NewClickUpService(
         Token:  token,
         TeamID: teamID,
         Client: &http.Client{Timeout: 20 * time.Second},
-        DB:     db,
     }
 }
 
@@ -269,7 +266,11 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                 log.Printf("DueDate is nil, using a fallback date (%v).", t.DueDate)
                             }
 
-            t.TimeEstimate = parseInt64Ptr(raw["time_estimate"])
+            rawTimeEstimate := parseInt64Ptr(raw["time_estimate"])
+            if rawTimeEstimate != nil {
+                minutes := *rawTimeEstimate / 60000 
+                t.TimeEstimate = &minutes
+            }
 
             if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
                 for _, rawCF := range cfArr {
@@ -293,8 +294,11 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 
 			// Assignees (jamak)
 			var assigneeIDs []int64
-			if arr, ok := raw["assignees"].([]interface{}); ok {
-				for _, assigneeData := range arr {
+			var assigneesArr []interface{}
+			var ok bool
+			if assigneesArr, ok = raw["assignees"].([]interface{}); ok {
+
+				for _, assigneeData := range assigneesArr {
 					if a, ok := assigneeData.(map[string]interface{}); ok {
 						if id, ok := a["id"].(float64); ok {
 							assigneeIDs = append(assigneeIDs, int64(id))
@@ -306,6 +310,22 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 			if len(assigneeIDs) > 0 {
 				firstAssigneeID := assigneeIDs[0]
 				t.AssigneeUserID = &firstAssigneeID
+			}
+
+			// Upsert user data dari task, tapi JANGAN ubah role yang sudah ada.
+			if len(assigneesArr) > 0 {
+				if assigneeData, ok := assigneesArr[0].(map[string]interface{}); ok {
+					if id, ok := assigneeData["id"].(float64); ok {
+						userFromTask := &model.User{
+							ClickUpID: int64(id),
+							Name:      safeString(assigneeData["username"]),
+							Email:     safeString(assigneeData["email"]),
+						}
+						if err := s.Repo.UpsertUserFromTask(ctx, userFromTask); err != nil {
+							log.Printf("WARNING: Failed to upsert user from task %s: %v\n", t.ID, err)
+						}
+					}
+				}
 			}
 
             if err := s.Repo.UpsertTask(ctx, t); err != nil {
@@ -725,94 +745,7 @@ func normalizeStatus(status string) string {
 }
 
 func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
-    query := `
-        SELECT
-            t.id,
-            t.name,
-            t.status_name,
-            t.start_date,
-            t.due_date,
-            t.date_done,
-            t.time_spent_ms,
-            u.clickup_id,
-            u.name,
-            u.username,
-            u.email, 
-            COALESCE(r.name, '') as role
-        FROM tasks t
-        JOIN task_assignees ta ON t.id = ta.task_id
-        JOIN users u ON ta.user_clickup_id = u.clickup_id
-        LEFT JOIN roles r ON u.role_id = r.id
-        WHERE
-            (t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0)) OR
-            (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0))
-        ORDER BY u.name, t.start_date
-    `
-    rows, err := s.DB.QueryContext(ctx, query, startMs, endMs)
-    if err != nil {
-        return nil, fmt.Errorf("error querying workload: %w", err)
-    }
-    defer rows.Close()
-
-    userMap := make(map[int64]*model.WorkloadUser)
-
-    for rows.Next() {
-        var taskID, taskName, statusName string
-        var startDate, dueDate, dateDone, timeSpentMs sql.NullInt64
-        var userID int64
-        var userName, userUsername, userEmail, userRole string
-
-        err := rows.Scan(
-            &taskID, &taskName, &statusName,
-            &startDate, &dueDate, &dateDone, &timeSpentMs,
-            &userID, &userName, &userUsername, &userEmail, &userRole,
-        )
-        if err != nil {
-            return nil, fmt.Errorf("error scanning workload row: %w", err)
-        }
-
-        // Cari atau buat entri pengguna di map
-        user, ok := userMap[userID]
-        if !ok {
-            user = &model.WorkloadUser{
-                UserID:        userID,
-                Name:          userName,
-                Username:      userUsername,
-                Email:         userEmail,
-                Role:          userRole,
-                Tasks:         []model.TaskDetail{},
-                ByStatus:      make(map[string]float64),
-                ByCategory:    make(map[string]float64),
-                StandardHours: 8.0,
-            }
-            userMap[userID] = user
-        }
-
-        // Buat detail tugas
-        task := model.TaskDetail{
-            ID:         taskID,
-            Name:       taskName,
-            StatusName: normalizeStatus(statusName),
-            StartDate:  msToDateString(toInt64Ptr(startDate)),
-            DueDate:    msToDateString(toInt64Ptr(dueDate)),
-            DateDone:   msToDateString(toInt64Ptr(dateDone)),
-            Assignees:  []model.AssigneeDetail{{ClickUpID: userID, Name: userName, Username: userUsername, Email: userEmail}},
-        }
-        if timeSpentMs.Valid {
-            task.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
-        }
-
-        // Tambahkan tugas ke pengguna yang sesuai dan perbarui total jam
-        user.Tasks = append(user.Tasks, task)
-        user.TotalHours += task.TimeSpentHours
-    }
-    var result []model.WorkloadUser
-    for _, user := range userMap {
-        user.TaskCount = len(user.Tasks)
-        result = append(result, *user)
-    }
-
-    return result, nil
+	return s.Repo.GetWorkload(ctx, time.UnixMilli(startMs), time.UnixMilli(endMs))
 }
 
 func msToDateString(ms *int64) *string { 
@@ -824,7 +757,12 @@ func msToDateString(ms *int64) *string {
 	return &s
 }
 
-func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int64) ([]model.TaskDetail, error) {
+func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int64, sortOrder string) ([]model.TaskDetail, error) {
+	orderDirection := "DESC" // Default: terbaru
+	if strings.ToLower(sortOrder) == "asc" {
+		orderDirection = "ASC" // Terlama
+	}
+
 	query := `
 		SELECT
 			t.id,
@@ -841,8 +779,9 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		WHERE
 			(t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0))
 			OR (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0))
+		ORDER BY t.start_date %s
 	`
-	rows, err := s.DB.QueryContext(ctx, query, startMs, endMs) 
+	rows, err := s.Repo.DB.QueryContext(ctx, fmt.Sprintf(query, orderDirection), startMs, endMs)
 
 	if err != nil {
 		log.Printf("Error querying tasks by range: %v", err)
@@ -892,8 +831,11 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		}
 
 		if timeEstimate.Valid {
-			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
-			// taskDetail.TimeEstimate sudah tidak ada, jadi baris ini bisa dihapus jika ada
+			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0
+		}
+
+		if timeSpentMs.Valid {
+			taskDetail.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
 		}
 
 		if _, exists := taskMap[taskID]; !exists {
@@ -909,7 +851,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		JOIN users u ON ta.user_clickup_id = u.clickup_id
 		WHERE ta.task_id = ANY($1)
 	`
-	assigneeRows, err := s.DB.QueryContext(ctx, assigneeQuery, pq.Array(taskOrder))
+	assigneeRows, err := s.Repo.DB.QueryContext(ctx, assigneeQuery, pq.Array(taskOrder))
 	if err != nil {
 		log.Printf("Error querying assignees: %v", err)
 		return nil, err
@@ -941,7 +883,7 @@ func nullTimeToDateString(nt sql.NullTime) *string {
 	if !nt.Valid {
 		return nil
 	}
-	s := nt.Time.Format("2006-01-02")
+	s := nt.Time.Format("02-01-2006")
 	return &s
 }
 
@@ -950,4 +892,22 @@ func toInt64Ptr(ni sql.NullInt64) *int64 {
 		return nil
 	}
 	return &ni.Int64
+}
+
+func WorkingDaysBetween(start, end time.Time) int {
+	if end.Before(start) {
+		return 0
+	}
+
+	start = start.Truncate(24 * time.Hour)
+	end = end.Truncate(24 * time.Hour)
+
+	days := 0
+	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+		wd := d.Weekday()
+		if wd != time.Saturday && wd != time.Sunday {
+			days++
+		}
+	}
+	return days
 }

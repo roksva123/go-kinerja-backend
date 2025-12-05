@@ -269,23 +269,29 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 	startStr := c.Query("start_date")
 	endStr := c.Query("end_date")
 
-	layout := "2006-01-02"
+	layout := "02-01-2006"
 	startDate, err := time.Parse(layout, startStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start_date format, use YYYY-MM-DD"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start_date format, use DD-MM-YYYY"})
 		return
 	}
 	endDate, err := time.Parse(layout, endStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end_date format, use YYYY-MM-DD"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end_date format, use DD-MM-YYYY"})
 		return
 	}
 
-	assigneesMap, tasksByAssignee, err := h.Svc.GetTasksByRangeGroupedByAssignee(c.Request.Context(), startDate, endDate)
+	sortOrder := c.DefaultQuery("sort", "desc") // Default ke 'desc' (terbaru)
+
+	workingDays := service.WorkingDaysBetween(startDate, endDate)
+	expectedHours := float64(workingDays * 8)
+
+	assigneesMap, tasksByAssignee, err := h.Svc.GetTasksByRangeGroupedByAssignee(c.Request.Context(), startDate, endDate, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
 
 	var responseAssignees []AssigneeWithTasks
 	for id, assignee := range assigneesMap {
@@ -305,12 +311,19 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			}
 		}
 
+		totalSpentHours := 0.0
+		for _, task := range tasksForResponse {
+			totalSpentHours += task.TimeSpentHours
+		}
+
 		responseAssignees = append(responseAssignees, AssigneeWithTasks{
 			ClickupID: int(assignee.ClickUpID),
 			Username:  assignee.Username,
 			Email:     assignee.Email,
 			Name:      assignee.Name,
 			Tasks:     tasksForResponse,
+			TotalSpentHours: totalSpentHours,
+			ExpectedHours:   expectedHours,
 		})
 	}
 

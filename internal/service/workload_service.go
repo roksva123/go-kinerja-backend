@@ -23,30 +23,12 @@ func NewWorkloadService(repo *repository.PostgresRepo, clickSvc *ClickUpService)
 	}
 }
 
-func workingDaysBetween(start, end time.Time) int {
-	if end.Before(start) {
-		return 0
-	}
-
-	start = start.Truncate(24 * time.Hour)
-	end = end.Truncate(24 * time.Hour)
-
-	days := 0
-	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		wd := d.Weekday()
-		if wd != time.Saturday && wd != time.Sunday {
-			days++
-		}
-	}
-	return days
-}
-
 func msToHours(ms int64) float64 {
 	return float64(ms) / 1000.0 / 3600.0
 }
 
-func (s *WorkloadService) GetTasksByRangeGroupedByAssignee(ctx context.Context, startDate, endDate time.Time) (map[int64]model.AssigneeDetail, map[int64][]model.TaskDetail, error) {
-	tasks, err := s.ClickSvc.GetTasksByRange(ctx, startDate.UnixMilli(), endDate.UnixMilli())
+func (s *WorkloadService) GetTasksByRangeGroupedByAssignee(ctx context.Context, startDate, endDate time.Time, sortOrder string) (map[int64]model.AssigneeDetail, map[int64][]model.TaskDetail, error) {
+	tasks, err := s.ClickSvc.GetTasksByRange(ctx, startDate.UnixMilli(), endDate.UnixMilli(), sortOrder)
 	if err != nil {
 		return nil, nil, err
 	}

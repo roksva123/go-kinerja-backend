@@ -1,9 +1,12 @@
 package model
 
-import "time"
+import (
+	"time"
+)
 
 type User struct {
     ClickUpID    int64     `json:"clickup_id"`
+    RoleID       JsonNullInt64 `json:"role_id,omitempty"`
     Name         string    `json:"name"`
     Email        string    `json:"email"`
     Role         string    `json:"role"`

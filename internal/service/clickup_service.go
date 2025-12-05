@@ -131,15 +131,10 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 		for _, member := range team.Members {
 			u := &model.User{
 				ClickUpID:   member.User.ID,
-				Name: member.User.Username,
+				Name:        member.User.Username,
 				Email:       member.User.Email,
-				Status:      "aktif", 
-				Role:        "backend", 
-			}
-			if member.Role == 2 {
-				u.Role = "pm" 
-			} else if member.Role == 4 {
-				u.Role = "frontend"
+				Status:      "aktif",
+				// Role tidak diatur di sini agar tidak menimpa data yang sudah ada di DB
 			}
 
 			if err := s.Repo.UpsertUser(ctx, u); err != nil {

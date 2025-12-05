@@ -102,11 +102,15 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
             name TEXT UNIQUE NOT NULL
         );`,
         `INSERT INTO roles (name) VALUES
-            ('frontend'),
+            ('infra'),
+            ('mobile apps'),
+            ('web'),
             ('backend'),
-            ('ui-ux'),
-            ('server'),
-            ('pm')
+            ('pm'),
+            ('backend-web'),
+            ('analis'),
+            ('UI-UX'),
+            ('server')    
         ON CONFLICT (name) DO NOTHING;`,
         `INSERT INTO user_statuses (name) VALUES
             ('aktif'),
@@ -318,13 +322,15 @@ func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID st
 // UpsertUser
 func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
 	var roleID sql.NullInt64
-	err := r.DB.QueryRowContext(ctx, "SELECT id FROM roles WHERE name = $1", u.Role).Scan(&roleID)
-	if err != nil && err != sql.ErrNoRows {
-		log.Printf("Warning: could not find role_id for role '%s': %v", u.Role, err)
+	if u.Role != "" {
+		err := r.DB.QueryRowContext(ctx, "SELECT id FROM roles WHERE name = $1", u.Role).Scan(&roleID)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("Warning: could not find role_id for role '%s': %v", u.Role, err)
+		}
 	}
 
 	var statusID sql.NullInt64
-	err = r.DB.QueryRowContext(ctx, "SELECT id FROM user_statuses WHERE name = $1", u.Status).Scan(&statusID)
+	err := r.DB.QueryRowContext(ctx, "SELECT id FROM user_statuses WHERE name = $1", u.Status).Scan(&statusID)
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("Warning: could not find status_id for status '%s': %v", u.Status, err)
 	}
@@ -336,8 +342,7 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
             username = EXCLUDED.username,
             name = EXCLUDED.name,
             email = EXCLUDED.email,
-            -- Hanya update jika role_id yang baru valid (ditemukan)
-            role_id = COALESCE($5, users.role_id),
+            role_id = CASE WHEN $5 IS NOT NULL THEN $5 ELSE users.role_id END,
             status_id = COALESCE($6, users.status_id),
             updated_at = now()
     `,
@@ -560,6 +565,7 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     q := `
 		SELECT 
 			u.clickup_id, 
+			u.role_id,
 			u.name, 
 			u.email, 
 			COALESCE(r.name, '') as role, 
@@ -579,7 +585,8 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     var out []model.User
     for rows.Next() {
         var u model.User
-        if err := rows.Scan(&u.ClickUpID, &u.Name, &u.Email, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
+        // Langsung scan ke field RoleID.NullInt64
+        if err := rows.Scan(&u.ClickUpID, &u.RoleID, &u.Name, &u.Email, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
             return nil, err
         }
         out = append(out, u)
@@ -681,10 +688,11 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
         SELECT 
             t.id, t.name, t.description, 
             t.status_name, t.status_type, t.status_color,
-            t.start_date, t.due_date, t.date_done, t.date_closed, t.time_estimate, t.time_spent,
-            u.clickup_id, u.username, u.email, u.role
+            t.start_date, t.due_date, t.date_done, t.date_closed, t.time_estimate, t.time_spent_ms,
+            u.clickup_id, u.username, u.email, COALESCE(r.name, '') as role
         FROM tasks t
         LEFT JOIN users u ON t.assignee_user_id = u.clickup_id
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE 1=1
     `
 
@@ -1104,8 +1112,8 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
         SELECT 
             u.clickup_id AS user_id,
             u.username,
-            u.email,
-            u.role,
+            u.email, 
+            COALESCE(r.name, '') as role,
             '' as color,
             COALESCE(SUM(t.time_estimate), 0) AS total_ms,
             COUNT(t.id) AS task_count,
@@ -1116,10 +1124,11 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
                   AND tt.date_closed BETWEEN $1 AND $2
             ) AS total_tasks
         FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
         LEFT JOIN tasks t 
             ON t.assignee_user_id = u.clickup_id
            AND t.date_closed BETWEEN $1 AND $2
-        GROUP BY u.clickup_id, u.username, u.email, u.role
+        GROUP BY u.clickup_id, u.username, u.email, r.name
         ORDER BY u.username ASC;
     `
 
@@ -1129,7 +1138,6 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
     }
     defer rows.Close()
 
-	// Hitung hari kerja dalam rentang waktu, tidak termasuk akhir pekan.
 	workingDays := calculateWorkingDays(start, end)
 	expectedWorkHours := float64(workingDays * 8)
     var out []model.WorkloadUser
@@ -1143,7 +1151,7 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
             &u.Color, 
             &u.TotalMs,
             &u.TaskCount,
-            &u.TotalTasks,
+            &u.TotalTasks, 
         ); err != nil {
             return nil, err
         }

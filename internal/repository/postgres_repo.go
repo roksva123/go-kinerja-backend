@@ -84,8 +84,6 @@ func (r *PostgresRepo) GetByUsername(ctx context.Context, username string) (*mod
 
 func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
     queries := []string{
-		// `DROP TABLE IF EXISTS task_assignees;`, 
-		// `DROP TABLE IF EXISTS users CASCADE;`,  
 		`CREATE TABLE IF NOT EXISTS admins (
          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
          username VARCHAR(100) UNIQUE NOT NULL,
@@ -126,7 +124,6 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         `CREATE TABLE IF NOT EXISTS users (
          clickup_id BIGINT PRIMARY KEY,
          name TEXT,
-         username TEXT,
          email TEXT,
          password TEXT,
          role_id INT REFERENCES roles(id) ON DELETE SET NULL,
@@ -235,19 +232,32 @@ func (r *PostgresRepo) GetAdminByUsername(ctx context.Context, username string) 
 
 // Get admin by username
 func (r *PostgresRepo) GetAllUsers(ctx context.Context) ([]model.User, error) { 
-    query := `SELECT clickup_id, username, name, role, created_at, updated_at FROM users ORDER BY username`
+    query := `
+		SELECT 
+			u.clickup_id,
+			u.name,
+			u.email,
+			COALESCE(r.name, '') as role, 
+			COALESCE(us.name, '') as status,
+			'' as passwordhash,
+			u.created_at, 
+			u.updated_at 
+		FROM users u
+		LEFT JOIN roles r ON u.role_id = r.id
+		LEFT JOIN user_statuses us ON u.status_id = us.id
+		ORDER BY u.name
+	`
 
     rows, err := r.DB.QueryContext(ctx, query)
     if err != nil {
         return nil, err
     }
     defer rows.Close()
-
     var users []model.User
     for rows.Next() {
         var u model.User
         if err := rows.Scan(
-            &u.ClickUpID, &u.Name, &u.Name, &u.Role,
+            &u.ClickUpID, &u.Name, &u.Email, &u.Role, &u.Status, &u.PasswordHash,
             &u.CreatedAt, &u.UpdatedAt,
         ); err != nil {
             return nil, err
@@ -314,45 +324,29 @@ func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID st
 
 // UpsertUser
 func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
-	var roleID sql.NullInt64
-	if u.Role != "" {
-		err := r.DB.QueryRowContext(ctx, "SELECT id FROM roles WHERE name = $1", u.Role).Scan(&roleID)
-		if err != nil && err != sql.ErrNoRows {
-			log.Printf("Warning: could not find role_id for role '%s': %v", u.Role, err)
-		}
-	}
-
-	var statusID sql.NullInt64
-	err := r.DB.QueryRowContext(ctx, "SELECT id FROM user_statuses WHERE name = $1", u.Status).Scan(&statusID)
-	if err != nil && err != sql.ErrNoRows {
-		log.Printf("Warning: could not find status_id for status '%s': %v", u.Status, err)
-	}
-	
-	if u.Role == "" {
-		_, err = r.DB.ExecContext(ctx, `
-			INSERT INTO users (clickup_id, username, name, email, status_id)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (clickup_id) DO UPDATE SET
-				username = EXCLUDED.username,
-				name = EXCLUDED.name,
-				email = EXCLUDED.email,
-				status_id = COALESCE($5, users.status_id),
-				updated_at = now()
-		`, u.ClickUpID, u.Name, u.Name, u.Email, statusID)
-		return err
-	}
-
-	_, err = r.DB.ExecContext(ctx, `
-		INSERT INTO users (clickup_id, username, name, email, role_id, status_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
+	query := `
+		INSERT INTO users (clickup_id, name, email, role_id, status_id)
+		VALUES (
+			$1, $2, $3,
+			(SELECT id FROM roles WHERE LOWER(name) = LOWER($4) LIMIT 1),
+			(SELECT id FROM user_statuses WHERE LOWER(name) = LOWER($5) LIMIT 1)
+		)
 		ON CONFLICT (clickup_id) DO UPDATE SET
-			username = EXCLUDED.username,
 			name = EXCLUDED.name,
 			email = EXCLUDED.email,
-			role_id = COALESCE($5, users.role_id),
-			status_id = COALESCE($6, users.status_id),
+			-- Update role_id only if a new, valid role is provided.
+			-- Otherwise, keep the existing role_id.
+			role_id = CASE 
+				WHEN $4 <> '' THEN (SELECT id FROM roles WHERE LOWER(name) = LOWER($4) LIMIT 1)
+				ELSE users.role_id
+			END,
+			status_id = (SELECT id FROM user_statuses WHERE LOWER(name) = LOWER($5) LIMIT 1),
 			updated_at = now()
-	`, u.ClickUpID, u.Name, u.Name, u.Email, roleID, statusID)
+	`
+	_, err := r.DB.ExecContext(ctx, query, u.ClickUpID, u.Name, u.Email, u.Role, u.Status)
+	if err != nil {
+		log.Printf("Error upserting user: %v", err)
+	}
 	return err
 }
 
@@ -396,21 +390,9 @@ func (r *PostgresRepo) UpsertList(ctx context.Context, list *model.List) error {
 }
 
 func (r *PostgresRepo) UpsertUserFromTask(ctx context.Context, u *model.User) error {
-	query := `
-		INSERT INTO users (clickup_id, username, name, email, status_id)
-		VALUES ($1, $2, $3, $4, (SELECT id FROM user_statuses WHERE name = 'aktif'))
-		ON CONFLICT (clickup_id) DO UPDATE SET
-			username = EXCLUDED.username,
-			name = EXCLUDED.name,
-			email = EXCLUDED.email,
-			updated_at = now()
-		WHERE users.role_id IS NULL; -- Hanya update jika role belum diatur
-	`
-	_, err := r.DB.ExecContext(ctx, query, u.ClickUpID, u.Name, u.Name, u.Email)
-	if err != nil {
-		log.Printf("Error upserting user from task: %v", err)
-	}
-	return err
+	// Gunakan UpsertUser yang lebih lengkap untuk konsistensi
+	u.Status = "aktif" // Pastikan status diatur
+	return r.UpsertUser(ctx, u)
 }
 
 // UpsertTask
@@ -461,9 +443,10 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
 
 func (r *PostgresRepo) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
     query := `
-        SELECT clickup_id, username, email, role
-        FROM users
-        WHERE email = $1
+        SELECT u.clickup_id, u.name, u.email, COALESCE(r.name, '') as role
+        FROM users u
+		LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.email = $1
         LIMIT 1
     `
 
@@ -576,12 +559,12 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
 func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) { 
     q := `
 		SELECT 
-			u.clickup_id, 
-			u.role_id,
-			u.name, 
+			u.clickup_id,
+			u.name,
 			u.email, 
 			COALESCE(r.name, '') as role, 
 			COALESCE(us.name, '') as status, 
+			'' as passwordhash,
 			u.created_at, 
 			u.updated_at 
 		FROM users u
@@ -597,8 +580,15 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     var out []model.User
     for rows.Next() {
         var u model.User
-        // Langsung scan ke field RoleID.NullInt64
-        if err := rows.Scan(&u.ClickUpID, &u.RoleID, &u.Name, &u.Email, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
+        if err := rows.Scan(
+			&u.ClickUpID, 
+			&u.Name,
+			&u.Email,
+			&u.Role,
+			&u.Status,
+			&u.PasswordHash,
+			&u.CreatedAt,
+			&u.UpdatedAt); err != nil {
             return nil, err
         }
         out = append(out, u)
@@ -698,7 +688,7 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
 func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *int64, role, username string) ([]model.TaskWithMember, error) {
     q := `
         SELECT 
-            t.id, t.name, t.description, 
+            t.id, t.name, t.description,
             t.status_name, t.status_type, t.status_color,
             t.start_date, t.due_date, t.date_done, t.date_closed, t.time_estimate, t.time_spent_ms,
             u.clickup_id, u.username, u.email, COALESCE(r.name, '') as role
@@ -724,7 +714,7 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
     }
 
     if username != "" {
-        q += fmt.Sprintf(" AND (u.username ILIKE $%d)", idx)
+        q += fmt.Sprintf(" AND (u.name ILIKE $%d)", idx)
         args = append(args, "%"+username+"%", "%"+username+"%")
         idx += 2
     }
@@ -800,14 +790,12 @@ func (r *PostgresRepo) GetTasksByRange(
             t.date_closed,
             t.start_date,
             t.due_date,
-            u.username,
+            u.name,
             u.email,
             '' as color, -- Placeholder for color if not in users table
             u.clickup_id,
             u.clickup_id,
-            u.username,
-            t.time_estimate,
-            t.time_spent_ms
+            u.name
         FROM tasks t
         LEFT JOIN task_assignees ta ON t.id = ta.task_id
         LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
@@ -828,7 +816,7 @@ func (r *PostgresRepo) GetTasksByRange(
         i += 2
     }
     if username != "" {
-        query += fmt.Sprintf(" AND u.username ILIKE $%d", i)
+        query += fmt.Sprintf(" AND u.name ILIKE $%d", i)
         args = append(args, "%"+username+"%")
         i++
     }
@@ -877,9 +865,6 @@ func (r *PostgresRepo) GetTasksByRange(
             &t.AssigneeColor,
             &t.AssigneeUserID,
             &t.AssigneeClickUpID,
-            &t.Username,
-            &t.TimeEstimate,
-            &t.TimeSpentMs, 
         )
 
         if err != nil {
@@ -955,7 +940,7 @@ func (r *PostgresRepo) GetTasksFull(
     }
 
     if username != "" {
-        q += fmt.Sprintf(" AND (t.assignee_username ILIKE $%d)", i)
+        q += fmt.Sprintf(" AND (u.name ILIKE $%d)", i)
         args = append(args, "%"+username+"%")
         i += 2
     }
@@ -1003,13 +988,11 @@ func (r *PostgresRepo) GetTasksFull(
             return nil, err
         }
 
-		// Konversi milidetik ke time.Time
 		if startDate.Valid { t := time.UnixMilli(startDate.Int64); tf.StartDate = &t }
 		if dueDate.Valid { t := time.UnixMilli(dueDate.Int64); tf.DueDate = &t }
 		if dateDone.Valid { t := time.UnixMilli(dateDone.Int64); tf.DateDone = &t }
 		if dateClosed.Valid { t := time.UnixMilli(dateClosed.Int64); tf.DateClosed = &t }
 
-		// Konversi milidetik ke jam
         if timeEstimate.Valid {
 			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
 		}

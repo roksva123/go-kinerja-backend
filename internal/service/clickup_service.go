@@ -125,13 +125,31 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 			continue 
 		}
 
+		roleMap := map[string]string{
+			"Adi Nugroho":            "infra",
+			"Aditya Permadi":         "mobile apps",
+			"Alfitra Fadjri":         "web",
+			"Andhika Adjie Pradhana": "backend",
+			"Andri":                  "web",
+			"Arif Hidayat":           "mobile apps",
+			"aufa":                   "backend",
+			"Christian Wibisono":     "pm",
+			"Deni Candra":            "pm",
+			"Dwi A Sobarna":          "mobile apps",
+			"Egin Tia Yulanda":       "web",
+			"Fahri kurniawan":        "backend-web",
+			"Heru Septiadi":          "analis",
+			"Nurmian Petronella":     "analis",
+			"Sani Rosa":              "UI-UX",
+		}
+
 		for _, member := range team.Members {
 			u := &model.User{
 				ClickUpID:   member.User.ID,
 				Name:        member.User.Username,
 				Email:       member.User.Email,
 				Status:      "aktif",
-				// Role tidak diatur di sini agar tidak menimpa data yang sudah ada di DB
+				Role:        roleMap[member.User.Username],
 			}
 
 			if err := s.Repo.UpsertUser(ctx, u); err != nil {
@@ -292,7 +310,7 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                 }
             }
 
-			// Assignees (jamak)
+			// Assignees
 			var assigneeIDs []int64
 			var assigneesArr []interface{}
 			var ok bool
@@ -311,8 +329,6 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 				firstAssigneeID := assigneeIDs[0]
 				t.AssigneeUserID = &firstAssigneeID
 			}
-
-			// Upsert user data dari task, tapi JANGAN ubah role yang sudah ada.
 			if len(assigneesArr) > 0 {
 				if assigneeData, ok := assigneesArr[0].(map[string]interface{}); ok {
 					if id, ok := assigneeData["id"].(float64); ok {
@@ -436,7 +452,6 @@ func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.Full
         filter.EndDate = &end
     }
 
-    // Ambil dari repo
     data, err := s.Repo.GetFullSyncFiltered(ctx, filter.StartDate, filter.EndDate, filter.Role)
     if err != nil {
         return nil, err
@@ -537,10 +552,8 @@ func (s *ClickUpService) PullTasks(ctx context.Context) (int, error) {
                     t.Username = safeString(a["username"])
                     t.Email = safeString(a["email"])
                     t.Color = safeString(a["color"])
-                    // if clickup id present:
                     if cid, ok := a["id"].(float64); ok {
                         v := int64(cid)
-                        // you can add an AssigneeClickUpID field in model if wanted
                         _ = v
                     }
                 }

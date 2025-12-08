@@ -11,7 +11,7 @@ type User struct {
     Email        string    `json:"email"`
     Role         string    `json:"role"`
     Status       string    `json:"status"`
-    PasswordHash string    `json:"passwordhash"`
+    PasswordHash string    `json:"-"`
     CreatedAt    time.Time `json:"created_at"`
     UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -22,24 +22,6 @@ type UserResponse struct {
 	Email    string `json:"email"`
 	Color    string `json:"color"`
 }
-
-
-type ClickUpUser struct {
-    ID       int    `json:"id"`
-    Username string `json:"username"`
-    Email    string `json:"email"`
-    Color    string `json:"color"`
-    Role     string `json:"role"`
-}
-
-type ClickupUser struct {
-	ID             int64  `json:"id"`
-	Username       string `json:"username"`
-	Email          string `json:"email"`
-	ProfilePicture string `json:"profilePicture"`
-	Color          string `json:"color"`
-}
-
 
 // type ClickupTask struct {
 //     ID          string `json:"id"`

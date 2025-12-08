@@ -978,7 +978,7 @@ func (r *PostgresRepo) GetTasksFull(
 		if dateClosed.Valid { tf.DateClosed = &dateClosed.Time }
 
         if timeEstimate.Valid {
-			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
+			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0
 		}
         if timeSpent.Valid {
 			usernameStr := assigneeName.String
@@ -1197,7 +1197,7 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
         if dateClosed.Valid { t.DateClosed = &dateClosed.Time }
         if startDate.Valid { t.StartDate = &startDate.Time }
         if dueDate.Valid { t.DueDate = &dueDate.Time }
-        if timeEstimate.Valid { t.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0 }
+        if timeEstimate.Valid { t.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0 }
         if timeSpent.Valid { t.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0 }
 
         tasks = append(tasks, t)

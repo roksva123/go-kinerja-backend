@@ -140,7 +140,6 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         status_id TEXT,
         status_name TEXT,
         status_type TEXT,
-        status_color TEXT,
     
         date_done TIMESTAMPTZ,
         date_closed TIMESTAMPTZ,
@@ -178,20 +177,6 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         created_at TIMESTAMPTZ DEFAULT now(),
         updated_at TIMESTAMPTZ DEFAULT now()
     );`,
-    `CREATE TABLE IF NOT EXISTS tags (
-		id BIGSERIAL PRIMARY KEY,
-		task_id TEXT,
-		name TEXT,
-		color TEXT
-    );`,
-    `CREATE INDEX IF NOT EXISTS idx_tags_task_id ON tags(task_id);`,
-    `CREATE TABLE IF NOT EXISTS audit_logs (
-     id BIGSERIAL PRIMARY KEY,
-     action TEXT,
-     user_id BIGINT,
-     payload JSONB,
-     created_at TIMESTAMPTZ DEFAULT now()
-     );`,
     }
     for _, q := range queries {
         if _, err := r.DB.ExecContext(ctx, q); err != nil {
@@ -390,8 +375,7 @@ func (r *PostgresRepo) UpsertList(ctx context.Context, list *model.List) error {
 }
 
 func (r *PostgresRepo) UpsertUserFromTask(ctx context.Context, u *model.User) error {
-	// Gunakan UpsertUser yang lebih lengkap untuk konsistensi
-	u.Status = "aktif" // Pastikan status diatur
+	u.Status = "aktif" 
 	return r.UpsertUser(ctx, u)
 }
 
@@ -400,10 +384,9 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
     query := `
         INSERT INTO tasks (
             id, name, text_content, description,
-            status_id, status_name, status_type, status_color,
-            date_done, date_closed, start_date, due_date, time_estimate, time_spent_ms
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            status_id, status_name, status_type,
+            date_done, date_closed, start_date, due_date, time_estimate, time_spent_ms)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, 0), COALESCE($13, 0))
         ON CONFLICT (id)
         DO UPDATE SET
             name = EXCLUDED.name,
@@ -411,13 +394,12 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
             description = EXCLUDED.description,
             status_id = EXCLUDED.status_id,
             status_name = EXCLUDED.status_name,
-            status_color = EXCLUDED.status_color,
             date_done = EXCLUDED.date_done,
             date_closed = EXCLUDED.date_closed,
             start_date = EXCLUDED.start_date,
             due_date = EXCLUDED.due_date,
-            time_estimate = EXCLUDED.time_estimate,
-            time_spent_ms = EXCLUDED.time_spent_ms,
+            time_estimate = COALESCE(EXCLUDED.time_estimate, 0),
+            time_spent_ms = COALESCE(EXCLUDED.time_spent_ms, 0),
             updated_at = now()
     `
 
@@ -429,7 +411,6 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
         t.Status.ID,
         t.Status.Name,
         t.Status.Type,
-        t.Status.Color,
         t.DateDone,      
         t.DateClosed,    
         t.StartDate,     
@@ -479,7 +460,6 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
             status_id,
             status_name,
             status_type,
-            status_color,
             date_done,    -- Sekarang TIMESTAMPTZ
             start_date,   -- Sekarang TIMESTAMPTZ
             due_date,     -- Sekarang TIMESTAMPTZ
@@ -502,7 +482,7 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
         var t model.TaskResponse
 
         var (
-            statusID, statusName, statusType, statusColor sql.NullString
+            statusID, statusName, statusType sql.NullString
             dateDone, dateClosed, startDate, dueDate       sql.NullTime 
             uname, uemail, ucolor sql.NullString
         )
@@ -515,7 +495,6 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
             &statusID,
             &statusName,
             &statusType,
-            &statusColor,
             &dateDone,
             &dueDate,
             &startDate,
@@ -530,7 +509,6 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
         t.Status.ID = statusID.String
         t.Status.Name = statusName.String
         t.Status.Type = statusType.String
-        t.Status.Color = statusColor.String
 
         if dateDone.Valid { t.DateDone = &dateDone.Time }
         if dateClosed.Valid { t.DateClosed = &dateClosed.Time }
@@ -689,7 +667,7 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
     q := `
         SELECT 
             t.id, t.name, t.description,
-            t.status_name, t.status_type, t.status_color,
+            t.status_name, t.status_type,
             t.start_date, t.due_date, t.date_done, t.date_closed, t.time_estimate, t.time_spent_ms,
             u.clickup_id, u.username, u.email, COALESCE(r.name, '') as role
         FROM tasks t
@@ -737,7 +715,7 @@ func (r *PostgresRepo) GetFullDataFiltered(ctx context.Context, startMs, endMs *
 
         err := rows.Scan(
             &t.TaskID, &t.TaskName, &t.TaskDescription,
-            &t.TaskStatus, &t.TaskStatusType, &t.TaskStatusColor,
+            &t.TaskStatus, &t.TaskStatusType,
             &startDate, &dueDate, &dateDone, &dateClosed, &timeEstimate, &timeSpent,
             &userID, &userUsername, &userEmail, &userRole,
         )
@@ -778,27 +756,23 @@ func (r *PostgresRepo) GetTasksByRange(
     query := `
         SELECT
             t.id,
-            t.id as task_id,
             t.name,
             t.text_content,
             t.description,
             t.status_id,
             t.status_name,
             t.status_type,
-            t.status_color,
             t.date_done,
             t.date_closed,
             t.start_date,
             t.due_date,
+            t.time_spent_ms,
             u.name,
             u.email,
-            '' as color, -- Placeholder for color if not in users table
-            u.clickup_id,
-            u.clickup_id,
-            u.name
+            '' as color -- Placeholder for color if not in users table
         FROM tasks t
         LEFT JOIN task_assignees ta ON t.id = ta.task_id
-        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
+        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id -- Join with users table
         WHERE 1=1
     `
 
@@ -809,7 +783,8 @@ func (r *PostgresRepo) GetTasksByRange(
         query += fmt.Sprintf(`
             AND (
                 (t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0)) OR
-                (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0))
+                (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0)) OR
+                (t.date_closed >= to_timestamp($1 / 1000.0) AND t.date_closed <= to_timestamp($2 / 1000.0))
             )
         `)
         args = append(args, *startMs, *endMs)
@@ -827,7 +802,7 @@ func (r *PostgresRepo) GetTasksByRange(
         i++
     }
 
-    query += " ORDER BY start_date ASC"
+    query += " ORDER BY t.start_date DESC, t.name ASC"
 
     log.Println("==== GetTasksByRange Query ====")
     log.Println(query)
@@ -848,23 +823,20 @@ func (r *PostgresRepo) GetTasksByRange(
 
         err := rows.Scan(
             &t.ID,
-            &t.TaskID,
             &t.Name,
             &t.TextContent,
             &t.Description,
             &t.Status.ID,
             &t.Status.Name,
             &t.Status.Type,
-            &t.Status.Color,
             &t.DateDone,
             &t.DateClosed,
             &t.StartDate,
             &t.DueDate,
+            &t.TimeSpentMs,
             &t.AssigneeUsername,
             &t.AssigneeEmail,
             &t.AssigneeColor,
-            &t.AssigneeUserID,
-            &t.AssigneeClickUpID,
         )
 
         if err != nil {
@@ -912,7 +884,6 @@ func (r *PostgresRepo) GetTasksFull(
             t.description,
             t.status_name,
             t.status_type,
-            t.status_color,
 
             t.start_date,
             t.due_date,
@@ -975,7 +946,6 @@ func (r *PostgresRepo) GetTasksFull(
             &tf.Description,
             &tf.StatusName,
             &tf.StatusType,
-            &tf.StatusColor,
 
             &startDate,
             &dueDate,
@@ -1017,7 +987,6 @@ func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate 
             status_id,
             status_name,
             status_type,
-            status_color,
             date_done,
             date_closed,
             assignee_user_id,
@@ -1058,7 +1027,6 @@ func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate 
         &t.Status.ID,
         &t.Status.Name,
         &t.Status.Type,
-        &t.Status.Color,
         &t.DateDone,
         &t.DateClosed,
         &t.AssigneeUserID,
@@ -1112,11 +1080,12 @@ func (r *PostgresRepo) GetWorkload(ctx context.Context, start, end time.Time) ([
         LEFT JOIN task_assignees ta ON u.clickup_id = ta.user_clickup_id
         LEFT JOIN tasks t ON ta.task_id = t.id AND (
             (t.start_date IS NOT NULL AND t.due_date IS NOT NULL AND t.start_date <= $2 AND t.due_date >= $1) OR
-            (t.date_done IS NOT NULL AND t.date_done BETWEEN $1 AND $2)
+            (t.date_done IS NOT NULL AND t.date_done BETWEEN $1 AND $2) OR
+            (t.date_closed IS NOT NULL AND t.date_closed BETWEEN $1 AND $2)
         )
         WHERE u.status_id = (SELECT id FROM user_statuses WHERE name = 'aktif')
         GROUP BY u.clickup_id, u.name, u.email, r.name
-        ORDER BY u.name ASC;
+        ORDER BY u.name ASC
     `
 
     rows, err := r.DB.QueryContext(ctx, query, start, end)
@@ -1154,24 +1123,21 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
     query := `
         SELECT 
             t.id,
-            t.task_id,
             t.name,
             t.description,
             t.text_content,
             t.status_id,
-            s.name AS status_name,
-            s.type AS status_type,
-            s.color AS status_color,
+            t.status_name,
+            t.status_type,
             t.date_done,
             t.date_closed,
-            t.time_spent,
-            c.name AS category
+            t.time_spent_ms,
+            '' AS category -- Placeholder for category
         FROM tasks t
-        LEFT JOIN statuses s ON s.id = t.status_id
-        LEFT JOIN categories c ON c.id = t.category_id
-        WHERE t.assignee_user_id = $1
-          AND t.date_closed BETWEEN $2 AND $3
-        ORDER BY t.date_closed DESC;
+        INNER JOIN task_assignees ta ON t.id = ta.task_id
+        WHERE ta.user_clickup_id = $1
+          AND (t.date_done BETWEEN $2 AND $3 OR t.date_closed BETWEEN $2 AND $3)
+        ORDER BY t.date_closed DESC, t.name ASC
     `
 
     rows, err := r.DB.QueryContext(ctx, query, userID, start, end)
@@ -1185,14 +1151,12 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
         var t model.TaskItem
         if err := rows.Scan(
             &t.ID,
-            &t.TaskID,
             &t.Name,
             &t.Description,
             &t.TextContent,
             &t.StatusID,
             &t.StatusName,
             &t.StatusType,
-            &t.StatusColor,
             &t.DateDone,
             &t.DateClosed,
             &t.TimeSpent,

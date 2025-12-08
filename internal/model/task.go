@@ -92,24 +92,22 @@ type TaskFull struct {
 }
 
 type TaskItem struct {
-	ID          int64  `json:"id"`
-	TaskID      string `json:"task_id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	TextContent string `json:"text_content"`
-
-	StatusID    int64  `json:"status_id"`
-	StatusName  string `json:"status_name"`
-	StatusType  string `json:"status_type"`
-	StatusColor string `json:"status_color"`
-
-	DateDone   *time.Time `json:"date_done"`
-	DateClosed *time.Time `json:"date_closed"`
-
-	TimeSpent int64  `json:"time_spent"`
-	Category  string `json:"category"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description"`
+	TextContent     string    `json:"text_content"`
+	StatusID        string    `json:"status_id"`
+	StatusName      string    `json:"status_name"`
+	StatusType      string    `json:"status_type"`
+	DateDone        *time.Time `json:"date_done"`
+	DateClosed      *time.Time `json:"date_closed"`
+	StartDate       *time.Time `json:"start_date"` 
+	DueDate         *time.Time `json:"due_date"`   
+	TimeEstimateHours float64   `json:"time_estimate_hours"` 
+	TimeSpentHours  float64   `json:"time_spent_hours"`    
+	Category        string    `json:"category"`
+	
 }
-
 
 type TaskResponse struct {
     ID          string  `json:"id"`

@@ -702,8 +702,8 @@ func (s *ClickUpService) SyncSpacesAndFolders(ctx context.Context) error {
 				if len(listsResponse.Lists) > 0 {
 					log.Printf("Folder %s has %d lists. Saving to DB...", folder.ID, len(listsResponse.Lists))
 					for i := range listsResponse.Lists {
-						listsResponse.Lists[i].FolderID = folder.ID      // Ini sudah benar
-						listsResponse.Lists[i].SpaceID = folder.Space.ID // Perbaikan di sini
+						listsResponse.Lists[i].FolderID = folder.ID      
+						listsResponse.Lists[i].SpaceID = folder.Space.ID 
 					}
 					for _, list := range listsResponse.Lists {
 						if err := s.Repo.UpsertList(ctx, &list); err != nil {
@@ -745,7 +745,7 @@ func normalizeStatus(status string) string {
 	if strings.Contains(lowerStatus, "review") || strings.Contains(lowerStatus, "progress") {
 		return "progres"
 	}
-	if strings.Contains(lowerStatus, "do") { // "to do"
+	if strings.Contains(lowerStatus, "do") {
 		return "to do"
 	}
 	if strings.Contains(lowerStatus, "done") || strings.Contains(lowerStatus, "complete") || strings.Contains(lowerStatus, "closed") {

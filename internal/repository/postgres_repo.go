@@ -107,8 +107,7 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
             ('pm'),
             ('backend-web'),
             ('analis'),
-            ('UI-UX'),
-            ('server')    
+            ('UI-UX')
         ON CONFLICT (name) DO NOTHING;`,
         `INSERT INTO user_statuses (name) VALUES
             ('aktif'),
@@ -890,8 +889,13 @@ func (r *PostgresRepo) GetTasksFull(
             t.date_done,
             t.date_closed,
             t.time_estimate,
-            t.time_spent_ms
+            t.time_spent_ms,
+            u.name,
+            r.name
         FROM tasks t
+        LEFT JOIN task_assignees ta ON t.id = ta.task_id
+        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE 1=1
     `
 
@@ -899,21 +903,27 @@ func (r *PostgresRepo) GetTasksFull(
     i := 1
 
     if startMs != nil && endMs != nil {
-        q += fmt.Sprintf(" AND t.start_date BETWEEN $%d AND $%d", i, i+1)
+        q += fmt.Sprintf(`
+            AND (
+                (t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0)) OR
+                (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0)) OR
+                (t.date_closed >= to_timestamp($1 / 1000.0) AND t.date_closed <= to_timestamp($2 / 1000.0))
+            )
+        `)
         args = append(args, *startMs, *endMs)
         i += 2
     }
 
     if role != "" {
-        q += fmt.Sprintf(" AND m.role = $%d", i)
+        q += fmt.Sprintf(" AND r.name = $%d", i)
         args = append(args, role)
         i++
     }
 
     if username != "" {
-        q += fmt.Sprintf(" AND (u.name ILIKE $%d)", i)
+        q += fmt.Sprintf(" AND u.name ILIKE $%d", i)
         args = append(args, "%"+username+"%")
-        i += 2
+        i++
     }
 
     if status != "" {
@@ -922,7 +932,7 @@ func (r *PostgresRepo) GetTasksFull(
         i++
     }
 
-    q += " ORDER BY COALESCE(t.start_date, t.date_done, 0) DESC"
+    q += " ORDER BY t.start_date DESC, t.name ASC"
 
     rows, err := r.DB.QueryContext(ctx, q, args...)
     if err != nil {
@@ -937,7 +947,9 @@ func (r *PostgresRepo) GetTasksFull(
         var tf model.TaskFull
 		
         var (
-            startDate, dueDate, dateDone, dateClosed, timeEstimate, timeSpent sql.NullInt64
+            startDate, dueDate, dateDone, dateClosed sql.NullTime
+            timeEstimate, timeSpent                  sql.NullInt64
+            assigneeName, userRole                   sql.NullString
         )
 
         err := rows.Scan(
@@ -953,20 +965,26 @@ func (r *PostgresRepo) GetTasksFull(
             &dateClosed,
             &timeEstimate,
             &timeSpent,
+            &assigneeName,
+            &userRole,
         )
         if err != nil {
             return nil, err
         }
 
-		if startDate.Valid { t := time.UnixMilli(startDate.Int64); tf.StartDate = &t }
-		if dueDate.Valid { t := time.UnixMilli(dueDate.Int64); tf.DueDate = &t }
-		if dateDone.Valid { t := time.UnixMilli(dateDone.Int64); tf.DateDone = &t }
-		if dateClosed.Valid { t := time.UnixMilli(dateClosed.Int64); tf.DateClosed = &t }
+		if startDate.Valid { tf.StartDate = &startDate.Time }
+		if dueDate.Valid { tf.DueDate = &dueDate.Time }
+		if dateDone.Valid { tf.DateDone = &dateDone.Time }
+		if dateClosed.Valid { tf.DateClosed = &dateClosed.Time }
 
         if timeEstimate.Valid {
 			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
 		}
         if timeSpent.Valid {
+			usernameStr := assigneeName.String
+			tf.Username = &usernameStr
+			roleStr := userRole.String
+			tf.Role = &roleStr
 			tf.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0
 		}
 
@@ -1131,6 +1149,9 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
             t.status_type,
             t.date_done,
             t.date_closed,
+            t.start_date,
+            t.due_date,
+            t.time_estimate,
             t.time_spent_ms,
             '' AS category -- Placeholder for category
         FROM tasks t
@@ -1149,6 +1170,10 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
     var tasks []model.TaskItem
     for rows.Next() {
         var t model.TaskItem
+        var timeEstimate, timeSpent sql.NullInt64
+        var startDate, dueDate, dateDone, dateClosed sql.NullTime
+        var category sql.NullString
+
         if err := rows.Scan(
             &t.ID,
             &t.Name,
@@ -1157,13 +1182,23 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
             &t.StatusID,
             &t.StatusName,
             &t.StatusType,
-            &t.DateDone,
-            &t.DateClosed,
-            &t.TimeSpent,
-            &t.Category,
+            &dateDone,
+            &dateClosed,
+            &startDate,
+            &dueDate,
+            &timeEstimate,
+            &timeSpent,
+            &category,
         ); err != nil {
             return nil, err
         }
+
+        if dateDone.Valid { t.DateDone = &dateDone.Time }
+        if dateClosed.Valid { t.DateClosed = &dateClosed.Time }
+        if startDate.Valid { t.StartDate = &startDate.Time }
+        if dueDate.Valid { t.DueDate = &dueDate.Time }
+        if timeEstimate.Valid { t.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0 }
+        if timeSpent.Valid { t.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0 }
 
         tasks = append(tasks, t)
     }

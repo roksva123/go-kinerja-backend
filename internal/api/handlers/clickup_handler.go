@@ -281,7 +281,7 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		return
 	}
 
-	sortOrder := c.DefaultQuery("sort", "desc") // Default ke 'desc' (terbaru)
+	sortOrder := c.DefaultQuery("sort", "desc") 
 
 	workingDays := service.WorkingDaysBetween(startDate, endDate)
 	expectedHours := float64(workingDays * 8)

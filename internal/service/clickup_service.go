@@ -127,7 +127,7 @@ func (s *ClickUpService) SyncMembers(ctx context.Context) error {
 
 		roleMap := map[string]string{
 			"Adi Nugroho":            "infra",
-			"Aditya Permadi":         "mobile apps",
+			"Aditya Permadi":         "backend",
 			"Alfitra Fadjri":         "web",
 			"Andhika Adjie Pradhana": "backend",
 			"Andri":                  "web",

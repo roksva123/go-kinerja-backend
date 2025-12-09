@@ -956,8 +956,8 @@ func (r *PostgresRepo) GetTasksFull(
 		
         var (
             startDate, dueDate, dateDone, dateClosed sql.NullTime
-            timeEstimate, timeSpent, userID          sql.NullInt64
-            assigneeName, userRole                   sql.NullString
+            timeEstimate, timeSpent, userID sql.NullInt64
+            assigneeName, userRole, assigneeEmail    sql.NullString
             projectName                              sql.NullString
         )
 

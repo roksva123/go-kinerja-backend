@@ -27,7 +27,6 @@ func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
 	var startDate, endDate time.Time
 	var err error
 
-	// Parse start_date dari query param
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
 		t, err := time.Parse("02-01-2006", startDateStr)
 		if err != nil {
@@ -35,13 +34,11 @@ func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
 			return
 		}
 		startDate = t
-		// Set ke awal hari
 		startOfDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 		ms := startOfDay.UnixMilli()
 		startMs = &ms
 	}
 
-	// Parse end_date dari query param
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
 		t, err := time.Parse("02-01-2006", endDateStr)
 		if err != nil {
@@ -49,7 +46,6 @@ func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
 			return
 		}
 		endDate = t
-		// Set ke akhir hari
 		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
 		ms := endOfDay.UnixMilli()
 		endMs = &ms
@@ -63,7 +59,6 @@ func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
 		return
 	}
 
-	// Hitung ekspektasi jam kerja jika ada rentang tanggal
 	var expectedWorkHours float64
 	if !startDate.IsZero() && !endDate.IsZero() {
 		workingDays := service.WorkingDaysBetween(startDate, endDate)
@@ -74,8 +69,6 @@ func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
 
 	c.JSON(http.StatusOK, dbSummary)
 }
-
-// --- Placeholder untuk fungsi handler lainnya ---
 
 func (h *WorkloadHandler) GetWorkload(c *gin.Context) {
 	startStr := c.Query("start")
@@ -102,8 +95,6 @@ func (h *WorkloadHandler) GetWorkload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Calculate summary
 	totalHoursAll := 0.0
 	for _, u := range users {
 		totalHoursAll += u.TotalHours
@@ -167,16 +158,32 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 
 	var responseAssignees []AssigneeWithTasks
 	for id, assignee := range assigneesMap {
-		
-		_ = tasksByAssignee[id] 
-		totalSpentHours := 0.0  
+		tasksForAssignee := tasksByAssignee[id]
+		totalSpentHours := 0.0
+		var tasksInResponse []TaskInResponse
+
+		for _, task := range tasksForAssignee {
+			totalSpentHours += task.TimeSpentHours
+			tasksInResponse = append(tasksInResponse, TaskInResponse{
+				ID:                task.ID,
+				Name:              task.Name,
+				Description:       task.Description,
+				ProjectName:       task.ProjectName,
+				StatusName:        task.StatusName,
+				StartDate:         task.StartDate,
+				DueDate:           task.DueDate,
+				DateDone:          task.DateDone,
+				TimeEstimateHours: task.TimeEstimateHours,
+				TimeSpentHours:    task.TimeSpentHours,
+			})
+		}
 
 		responseAssignees = append(responseAssignees, AssigneeWithTasks{
 			ClickupID:       int(assignee.ClickUpID),
 			Username:        assignee.Username,
 			Email:           assignee.Email,
 			Name:            assignee.Name,
-			Tasks:           []TaskInResponse{}, // Placeholder
+			Tasks:           tasksInResponse,
 			TotalSpentHours: totalSpentHours,
 			ExpectedHours:   expectedHours,
 		})

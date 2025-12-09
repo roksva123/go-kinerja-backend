@@ -31,6 +31,65 @@ func (s *WorkloadService) GetTasksSummary(ctx context.Context, startMs, endMs *i
 // }
 
 func (s *WorkloadService) GetTasksByRangeGroupedByAssignee(ctx context.Context, start, end time.Time, sortOrder string) (map[int64]model.AssigneeDetail, map[int64][]model.TaskDetail, error) {
-	// Placeholder implementation
-	return nil, nil, nil
+	startMs := start.UnixMilli()
+	endMs := end.UnixMilli()
+
+	// Panggil repository untuk mendapatkan semua tugas dalam rentang waktu
+	tasks, err := s.repo.GetTasksFull(ctx, &startMs, &endMs, "", "", "")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	assigneesMap := make(map[int64]model.AssigneeDetail)
+	tasksByAssignee := make(map[int64][]model.TaskDetail)
+
+	for _, task := range tasks {
+		if task.UserID == nil {
+			continue // Lewati tugas yang tidak memiliki assignee
+		}
+
+		userID := *task.UserID
+
+		// Jika assignee belum ada di map, tambahkan
+		if _, ok := assigneesMap[userID]; !ok {
+			var username, email, name string
+			if task.Username != nil {
+				username = *task.Username
+				name = *task.Username // Default name to username
+			}
+			if task.Email != nil {
+				email = *task.Email
+			}
+
+			assigneesMap[userID] = model.AssigneeDetail{
+				ClickUpID: userID,
+				Username:  username,
+				Email:     email,
+				Name:      name,
+			}
+		}
+
+		tasksByAssignee[userID] = append(tasksByAssignee[userID], model.TaskDetail{
+			ID:   task.TaskID,
+			Name: task.TaskName,
+			Description: task.Description,
+			StatusName: task.StatusName,
+			ProjectName: task.ProjectName,
+			StartDate: nullTimeToDateStringPointer(task.StartDate),
+			DueDate: nullTimeToDateStringPointer(task.DueDate),
+			DateDone: nullTimeToDateStringPointer(task.DateDone),
+			TimeEstimateHours: task.TimeEstimateHours,
+			TimeSpentHours: task.TimeSpentHours,
+		})
+	}
+
+	return assigneesMap, tasksByAssignee, nil
+}
+
+func nullTimeToDateStringPointer(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.Format("02-01-2006")
+	return &s
 }

@@ -263,6 +263,13 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
             }
             log.Printf("Status: %+v\n", t.Status)
 
+			// List (Project)
+			if list, ok := raw["list"].(map[string]interface{}); ok {
+				if id, ok := list["id"].(string); ok {
+					t.ListID = &id
+				}
+			}
+
             // Dates
             t.DateDone = msToTimePtr(parseInt64Ptr(raw["date_done"]))
             t.DateClosed = msToTimePtr(parseInt64Ptr(raw["date_closed"]))
@@ -286,9 +293,13 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 
             rawTimeEstimate := parseInt64Ptr(raw["time_estimate"])
             if rawTimeEstimate != nil {
-                minutes := *rawTimeEstimate / 60000 
+                minutes := *rawTimeEstimate / 60000
                 t.TimeEstimate = &minutes
-            }
+            } else {
+				// Jika tidak ada estimasi, set default 8 jam (480 menit)
+				defaultMinutes := int64(480)
+				t.TimeEstimate = &defaultMinutes
+			}
 
             if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
                 for _, rawCF := range cfArr {

@@ -72,6 +72,7 @@ type TaskFull struct {
 	StatusName   string `json:"status_name"`
 	StatusType   string `json:"status_type"`
 	StatusColor  string `json:"status_color"`
+	ProjectName  *string `json:"project_name"`
 	StartDate    *time.Time `json:"start_date"`
 	DueDate      *time.Time `json:"due_date"`
 	DateDone     *time.Time `json:"date_done"`
@@ -100,6 +101,7 @@ type TaskItem struct {
 	StatusName      string    `json:"status_name"`
 	StatusType      string    `json:"status_type"`
 	DateDone        *time.Time `json:"date_done"`
+	ProjectName     *string   `json:"project_name"`
 	DateClosed      *time.Time `json:"date_closed"`
 	StartDate       *time.Time `json:"start_date"` 
 	DueDate         *time.Time `json:"due_date"`   
@@ -143,6 +145,7 @@ type TaskResponse struct {
 	AssigneeClickUpID *int64 `json:"assignee_clickup_id"`
     AssigneeUserID   *int64 `json:"assignee_user_id"`
     AssigneeID       *int64 `json:"assignee_id"`
+	ListID           *string `json:"list_id"`
 	AssigneeColor    *string `json:"assignee_color"`
     AssigneeUsername *string `json:"assignee_username"`
     AssigneeEmail    *string `json:"assignee_email"`
@@ -151,6 +154,7 @@ type TaskResponse struct {
 type TaskSummary struct {
 	TotalTasks         int     `json:"total_tasks"`
 	TotalWorkHours     float64 `json:"total_work_hours"`
+	ActualWorkHours    float64 `json:"actual_work_hours"`
 	TotalUpcomingHours float64 `json:"total_upcoming_hours"`
 }
 

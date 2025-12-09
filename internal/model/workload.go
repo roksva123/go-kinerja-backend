@@ -32,6 +32,7 @@ type TaskDetail struct {
 	Name            string   `json:"name"`
 	Description     string   `json:"description,omitempty"`
 	TextContent     string   `json:"text_content,omitempty"`
+	ProjectName     *string  `json:"project_name,omitempty"`
 	StatusName      string   `json:"status_name"`
 	StartDate       *string  `json:"start_date"`
 	DueDate         *string  `json:"due_date"`

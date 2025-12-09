@@ -146,6 +146,7 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         due_date TIMESTAMPTZ,
         time_estimate BIGINT,
         time_spent_ms BIGINT,
+        list_id TEXT, -- Pastikan ini ada di definisi CREATE TABLE
         created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
     );`,
@@ -156,6 +157,9 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
         UNIQUE(task_id, user_clickup_id)
     );`,
+    `DO $$ BEGIN
+        ALTER TABLE tasks ADD COLUMN IF NOT EXISTS list_id TEXT;
+    END $$;`, -- Ini akan menambahkan kolom jika belum ada
     `CREATE INDEX IF NOT EXISTS idx_tasks_start_date ON tasks(start_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_status_name ON tasks(status_name);`,
@@ -890,11 +894,15 @@ func (r *PostgresRepo) GetTasksFull(
             t.date_closed,
             t.time_estimate,
             t.time_spent_ms,
-            u.name,
+            l.name AS project_name,
+            u.clickup_id,
+            u.name AS user_name,
+            u.email,
             r.name
         FROM tasks t
         LEFT JOIN task_assignees ta ON t.id = ta.task_id
         LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
+        LEFT JOIN lists l ON t.list_id = l.id
         LEFT JOIN roles r ON u.role_id = r.id
         WHERE 1=1
     `
@@ -948,8 +956,9 @@ func (r *PostgresRepo) GetTasksFull(
 		
         var (
             startDate, dueDate, dateDone, dateClosed sql.NullTime
-            timeEstimate, timeSpent                  sql.NullInt64
+            timeEstimate, timeSpent, userID          sql.NullInt64
             assigneeName, userRole                   sql.NullString
+            projectName                              sql.NullString
         )
 
         err := rows.Scan(
@@ -965,7 +974,10 @@ func (r *PostgresRepo) GetTasksFull(
             &dateClosed,
             &timeEstimate,
             &timeSpent,
+            &projectName,
+            &userID,
             &assigneeName,
+            &assigneeEmail,
             &userRole,
         )
         if err != nil {
@@ -976,15 +988,26 @@ func (r *PostgresRepo) GetTasksFull(
 		if dueDate.Valid { tf.DueDate = &dueDate.Time }
 		if dateDone.Valid { tf.DateDone = &dateDone.Time }
 		if dateClosed.Valid { tf.DateClosed = &dateClosed.Time }
+		if userID.Valid {
+			tf.UserID = &userID.Int64
+		}
+		if projectName.Valid {
+			tf.ProjectName = &projectName.String
+		}
+		if assigneeName.Valid {
+			tf.Username = &assigneeName.String
+		}
+		if assigneeEmail.Valid {
+			tf.Email = &assigneeEmail.String
+		}
+		if userRole.Valid {
+			tf.Role = &userRole.String
+		}
 
         if timeEstimate.Valid {
 			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0
 		}
         if timeSpent.Valid {
-			usernameStr := assigneeName.String
-			tf.Username = &usernameStr
-			roleStr := userRole.String
-			tf.Role = &roleStr
 			tf.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0
 		}
 
@@ -1217,7 +1240,7 @@ func (r *PostgresRepo) GetTasksSummary(
         SELECT
             COUNT(t.id),
             COALESCE(SUM(t.time_spent_ms), 0),
-            COALESCE(SUM(CASE WHEN t.status_name ILIKE 'to do' THEN t.time_estimate ELSE 0 END), 0)
+            COALESCE(SUM(CASE WHEN t.status_type = 'open' THEN t.time_estimate ELSE 0 END), 0)
         FROM tasks t
         LEFT JOIN task_assignees ta ON t.id = ta.task_id
         LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
@@ -1263,8 +1286,9 @@ func (r *PostgresRepo) GetTasksSummary(
 
 	summary := &model.TaskSummary{
 		TotalTasks:         totalTasks,
-		TotalWorkHours:     float64(totalTimeSpent) / 3600000.0,
-		TotalUpcomingHours: float64(totalTimeEstimate) / 60.0, 
+		// TotalWorkHours akan dihitung di handler
+		ActualWorkHours:    float64(totalTimeSpent) / 3600000.0, // Konversi dari ms ke jam
+		TotalUpcomingHours: float64(totalTimeEstimate) / 60.0,   // Konversi dari menit ke jam
 	}
 
 	return summary, nil

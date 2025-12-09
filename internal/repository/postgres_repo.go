@@ -1206,6 +1206,70 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
     return tasks, nil
 }
 
+func (r *PostgresRepo) GetTasksSummary(
+	ctx context.Context,
+	startMs *int64,
+	endMs *int64,
+	username string,
+) (*model.TaskSummary, error) {
+
+	query := `
+        SELECT
+            COUNT(t.id),
+            COALESCE(SUM(t.time_spent_ms), 0),
+            COALESCE(SUM(CASE WHEN t.status_name ILIKE 'to do' THEN t.time_estimate ELSE 0 END), 0)
+        FROM tasks t
+        LEFT JOIN task_assignees ta ON t.id = ta.task_id
+        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
+        WHERE 1=1
+    `
+
+	args := []interface{}{}
+	i := 1
+
+	if startMs != nil && endMs != nil {
+		query += fmt.Sprintf(`
+            AND (
+                (t.start_date <= to_timestamp($%d / 1000.0) AND t.due_date >= to_timestamp($%d / 1000.0)) OR
+                (t.date_done >= to_timestamp($%d / 1000.0) AND t.date_done <= to_timestamp($%d / 1000.0)) OR
+                (t.date_closed >= to_timestamp($%d / 1000.0) AND t.date_closed <= to_timestamp($%d / 1000.0))
+            )
+        `, i+1, i, i, i+1, i, i+1) // Note: order is end, start for range overlap
+		args = append(args, *startMs, *endMs)
+		i += 2
+	}
+
+	if username != "" {
+		query += fmt.Sprintf(" AND u.name ILIKE $%d", i)
+		args = append(args, "%"+username+"%")
+		i++
+	}
+
+	var totalTasks int
+	var totalTimeSpent, totalTimeEstimate int64
+
+	err := r.DB.QueryRowContext(ctx, query, args...).Scan(
+		&totalTasks,
+		&totalTimeSpent,
+		&totalTimeEstimate,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return &model.TaskSummary{}, nil 
+		}
+		return nil, err
+	}
+
+	summary := &model.TaskSummary{
+		TotalTasks:         totalTasks,
+		TotalWorkHours:     float64(totalTimeSpent) / 3600000.0,
+		TotalUpcomingHours: float64(totalTimeEstimate) / 60.0, 
+	}
+
+	return summary, nil
+}
+
 func (r *PostgresRepo) GetLists(ctx context.Context) ([]model.List, error) {
 	query := `SELECT id, name, archived, folder_id, space_id FROM lists ORDER BY name`
 	rows, err := r.DB.QueryContext(ctx, query)

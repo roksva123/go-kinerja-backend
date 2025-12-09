@@ -148,6 +148,11 @@ type TaskResponse struct {
     AssigneeEmail    *string `json:"assignee_email"`
 }
 
+type TaskSummary struct {
+	TotalTasks         int     `json:"total_tasks"`
+	TotalWorkHours     float64 `json:"total_work_hours"`
+	TotalUpcomingHours float64 `json:"total_upcoming_hours"`
+}
 
 
 type Status struct {

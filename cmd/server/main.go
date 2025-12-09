@@ -96,6 +96,7 @@ func main() {
 		work.POST("/sync", workloadHandler.SyncAll)
 		work.GET("/workload", workloadHandler.GetWorkload)
 		work.GET("/tasks-by-range", workloadHandler.GetTasksByRange)
+		work.GET("/summary", workloadHandler.GetTasksSummary)
 		work.GET("", workloadHandler.GetWorkload)
 	}	
 

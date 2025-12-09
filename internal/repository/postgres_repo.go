@@ -159,7 +159,7 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
     );`,
     `DO $$ BEGIN
         ALTER TABLE tasks ADD COLUMN IF NOT EXISTS list_id TEXT;
-    END $$;`, -- Ini akan menambahkan kolom jika belum ada
+    END $$;`,
     `CREATE INDEX IF NOT EXISTS idx_tasks_start_date ON tasks(start_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_status_name ON tasks(status_name);`,

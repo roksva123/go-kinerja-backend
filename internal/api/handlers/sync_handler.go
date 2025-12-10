@@ -39,3 +39,19 @@ func (h *SyncHandler) GetListsHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, lists)
 }
+
+func (h *SyncHandler) GetFoldersHandler(c *gin.Context) {
+	log.Println("--- API TRIGGER: Syncing Spaces, Folders, and Lists before getting folders ---")
+	err := h.ClickUpService.SyncSpacesAndFolders(c.Request.Context())
+	if err != nil {
+		log.Printf("ERROR from SyncSpacesAndFolders service during GetFolders: %v", err)
+
+	}
+	folders, err := h.ClickUpService.GetFolders(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, folders)
+}

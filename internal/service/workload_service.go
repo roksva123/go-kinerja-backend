@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/roksva123/go-kinerja-backend/internal/model"
@@ -21,20 +22,53 @@ func NewWorkloadService(repo *repository.PostgresRepo, clickupSvc *ClickUpServic
 	}
 }
 
-func (s *WorkloadService) GetTasksSummary(ctx context.Context, startMs, endMs *int64, username string) (*model.TaskSummary, error) {
-	return s.repo.GetTasksSummary(ctx, startMs, endMs, username)
+func (s *WorkloadService) GetTasksSummary(ctx context.Context, startDate, endDate time.Time, name, email string) ([]model.TaskSummary, error) {
+	summaries, err := s.repo.GetTasksSummaryByDateRange(ctx, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+
+	if name == "" && email == "" {
+		return summaries, nil
+	}
+
+	var filteredSummaries []model.TaskSummary
+	for _, summary := range summaries {
+		nameMatch := name == "" || strings.Contains(strings.ToLower(summary.Name), strings.ToLower(name))
+		emailMatch := email == "" || strings.Contains(strings.ToLower(summary.Email), strings.ToLower(email))
+
+		if nameMatch && emailMatch {
+			filteredSummaries = append(filteredSummaries, summary)
+		}
+	}
+
+	return filteredSummaries, nil
 }
 
-// func (s *WorkloadService) SyncAll(ctx context.Context) error {
-// 	// Placeholder implementation
-// 	return nil
-// }
+func (s *WorkloadService) GetWorkload(ctx context.Context, start, end time.Time, username string) ([]model.WorkloadUser, error) {
+	workloads, err := s.repo.GetWorkload(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	if username == "" {
+		return workloads, nil
+	}
+
+	var filteredWorkloads []model.WorkloadUser
+	for _, workload := range workloads {
+		if strings.Contains(strings.ToLower(workload.Username), strings.ToLower(username)) {
+			filteredWorkloads = append(filteredWorkloads, workload)
+		}
+	}
+
+	return filteredWorkloads, nil
+}
 
 func (s *WorkloadService) GetTasksByRangeGroupedByAssignee(ctx context.Context, start, end time.Time, sortOrder string) (map[int64]model.AssigneeDetail, map[int64][]model.TaskDetail, error) {
 	startMs := start.UnixMilli()
 	endMs := end.UnixMilli()
 
-	// Panggil repository untuk mendapatkan semua tugas dalam rentang waktu
 	tasks, err := s.repo.GetTasksFull(ctx, &startMs, &endMs, "", "", "")
 	if err != nil {
 		return nil, nil, err
@@ -44,18 +78,26 @@ func (s *WorkloadService) GetTasksByRangeGroupedByAssignee(ctx context.Context, 
 	tasksByAssignee := make(map[int64][]model.TaskDetail)
 
 	for _, task := range tasks {
+		var userID int64
+
 		if task.UserID == nil {
-			continue // Lewati tugas yang tidak memiliki assignee
+			userID = 0 
+			if _, ok := assigneesMap[userID]; !ok {
+				assigneesMap[userID] = model.AssigneeDetail{
+					ClickUpID: userID,
+					Username:  "Unassigned",
+					Name:      "Unassigned",
+				}
+			}
+		} else {
+			userID = *task.UserID
 		}
 
-		userID := *task.UserID
-
-		// Jika assignee belum ada di map, tambahkan
 		if _, ok := assigneesMap[userID]; !ok {
 			var username, email, name string
 			if task.Username != nil {
 				username = *task.Username
-				name = *task.Username // Default name to username
+				name = *task.Username 
 			}
 			if task.Email != nil {
 				email = *task.Email

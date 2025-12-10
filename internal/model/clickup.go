@@ -1,191 +1,29 @@
 package model
 
-import (
-	"fmt"
-	"time"
-)
-
-type TaskStatus struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Color string `json:"color"`
-}
-
-type UserSimple struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Color    string `json:"color"`
-	RoleKey  string `json:"role_key"`
-}
-
-type FolderStatus struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	Type   string `json:"type"`
-	Order  int    `json:"orderindex"`
-	Color  string `json:"color"`
-}
-
 type SpaceInfo struct {
 	ID   string `json:"id"`
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 }
 
+
 type Folder struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	TaskCount int            `json:"task_count"`
-	Archived  bool           `json:"archived"`
-	Space     SpaceInfo      `json:"space"`
-	Statuses  []FolderStatus `json:"statuses"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	OrderIndex int       `json:"orderindex"`
+	Archived   bool      `json:"archived"`
+	TaskCount  string    `json:"task_count"` 
+	Lists      []List    `json:"lists"`
+	Space      SpaceInfo `json:"space"`
 }
 
 type List struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Archived bool   `json:"archived"`
-	// Kolom-kolom ini tidak datang dari API secara langsung,
-	// tapi kita isi di service untuk relasi database.
-	FolderID string `json:"-"`
-	SpaceID  string `json:"-"`
+	FolderID string `json:"-"` 
+	SpaceID  string `json:"-"` 
 }
 
-type FolderResponse struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Orderindex int    `json:"orderindex"`
-	Hidden     bool   `json:"hidden"`
-}
-
-func ParseClickUpTask(raw map[string]interface{}) *TaskResponse {
-	t := &TaskResponse{}
-
-	if v, ok := raw["id"].(string); ok {
-		t.ID = v
-	}
-	if v, ok := raw["name"].(string); ok {
-		t.Name = v
-	}
-	if v, ok := raw["text_content"].(string); ok {
-		t.TextContent = v
-	}
-	if v, ok := raw["description"].(string); ok {
-		t.Description = v
-	}
-
-	if st, ok := raw["status"].(map[string]interface{}); ok {
-		if v, ok := st["id"].(string); ok {
-			t.Status.ID = v
-		}
-		if v, ok := st["status"].(string); ok {
-			t.Status.Name = v
-		}
-		if v, ok := st["type"].(string); ok {
-			t.Status.Type = v
-		}
-		if v, ok := st["color"].(string); ok {
-			t.Status.Color = v
-		}
-	}
-
-	if arr, ok := raw["assignees"].([]interface{}); ok && len(arr) > 0 {
-		if user, ok := arr[0].(map[string]interface{}); ok {
-			if v, ok := user["username"].(string); ok {
-				t.Username = v
-			}
-			if v, ok := user["email"].(string); ok {
-				t.Email = v
-			}
-			if v, ok := user["color"].(string); ok {
-				t.Color = v
-			}
-		}
-	}
-
-	if cr, ok := raw["creator"].(map[string]interface{}); ok {
-		if t.Username == "" {
-			if v, ok := cr["username"].(string); ok {
-				t.Username = v
-			}
-		}
-		if t.Email == "" {
-			if v, ok := cr["email"].(string); ok {
-				t.Email = v
-			}
-		}
-	}
-
-	msToTimePtr := func(ms int64) *time.Time {
-		if ms == 0 {
-			return nil
-		}
-		t := time.UnixMilli(ms)
-		return &t
-	}
-
-	if v, ok := raw["date_done"].(string); ok && v != "" {
-		t.DateDone = msToTimePtr(parseInt64(v))
-	} else if v, ok := raw["date_done"].(float64); ok {
-		t.DateDone = msToTimePtr(int64(v))
-	}
-
-	if v, ok := raw["date_closed"].(string); ok && v != "" {
-		t.DateClosed = msToTimePtr(parseInt64(v))
-	} else if v, ok := raw["date_closed"].(float64); ok {
-		t.DateClosed = msToTimePtr(int64(v))
-	}
-
-	return t
-}
-
-func ParseClickUpUser(raw map[string]interface{}) *UserResponse {
-	u := &UserResponse{}
-
-	if user, ok := raw["user"].(map[string]interface{}); ok {
-		if v, ok := user["id"].(float64); ok {
-			u.ID = intToString(v)
-		}
-		if v, ok := user["username"].(string); ok {
-			u.Username = v
-		}
-		if v, ok := user["email"].(string); ok {
-			u.Email = v
-		}
-		if v, ok := user["color"].(string); ok {
-			u.Color = v
-		}
-	}
-
-	return u
-}
-
-func ParseClickUpFolder(raw map[string]interface{}) *FolderResponse {
-	f := &FolderResponse{}
-
-	if v, ok := raw["id"].(string); ok {
-		f.ID = v
-	}
-	if v, ok := raw["name"].(string); ok {
-		f.Name = v
-	}
-	if v, ok := raw["orderindex"].(float64); ok {
-		f.Orderindex = int(v)
-	}
-	if v, ok := raw["hidden"].(bool); ok {
-		f.Hidden = v
-	}
-
-	return f
-}
-
-func parseInt64(s string) int64 {
-	var out int64
-	fmt.Sscan(s, &out)
-	return out
-}
-
-func intToString(v float64) string {
-	return fmt.Sprintf("%.0f", v)
+type ClickUpFoldersResponse struct {
+	Folders []Folder `json:"folders"`
 }

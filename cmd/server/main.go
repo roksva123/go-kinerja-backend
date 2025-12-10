@@ -74,21 +74,21 @@ func main() {
 		clickup.POST("/sync/team", clickupHandler.SyncTeam)
 		clickup.POST("/sync/members", clickupHandler.SyncMembers)
 		clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
-		clickup.POST("/fullsync", clickupHandler.FullSync)
 		clickup.POST("/sync-all", clickupHandler.SyncAll)
-		clickup.POST("/sync/spaces-folders-lists", syncHandler.SyncSpacesFoldersAndListsHandler)
 
-		clickup.GET("/teams", clickupHandler.GetTeams)
+		clickup.GET("/spaces", clickupHandler.GetSpaces)
 		clickup.GET("/members", clickupHandler.GetMembers)
 		clickup.GET("/tasks", clickupHandler.GetTasks)
-		clickup.GET("/fullsync", clickupHandler.GetFullSync)
-		clickup.GET("/fullsync/filter", clickupHandler.GetFullSyncFiltered)
-		clickup.POST("/workload/allsync", workloadHandler.AllSync)
+		clickup.GET("/fullsync", clickupHandler.FullSync)
+		clickup.GET("/fullsync/filter", clickupHandler.GetFullSyncFiltered) 
 		clickup.GET("/data", clickupHandler.GetFullData)
-		clickup.GET("/lists", syncHandler.GetListsHandler)
+	}
 
-
-
+	sync := api.Group("/sync")
+	{
+		sync.POST("/spaces-folders-lists", syncHandler.SyncSpacesFoldersAndListsHandler)
+		sync.GET("/lists", syncHandler.GetListsHandler)
+		sync.GET("/folders", syncHandler.GetFoldersHandler)
 	}
 
 	work := api.Group("/workload")

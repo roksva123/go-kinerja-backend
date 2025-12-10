@@ -438,12 +438,16 @@ func (s *ClickUpService) GetMembers(ctx context.Context) ([]model.User, error) {
     return s.Repo.GetMembers(ctx)
 }
 
-func (s *ClickUpService) GetTeams(ctx context.Context) ([]model.Team, error) {
-    return s.Repo.GetTeams(ctx)
+func (s *ClickUpService) GetSpaces(ctx context.Context) ([]model.SpaceInfo, error) {
+	return s.Repo.GetSpaces(ctx)
 }
 
 func (s *ClickUpService) GetLists(ctx context.Context) ([]model.List, error) {
 	return s.Repo.GetLists(ctx)
+}
+
+func (s *ClickUpService) GetFolders(ctx context.Context) ([]model.Folder, error) {
+	return s.Repo.GetFolders(ctx)
 }
 
 func (s *ClickUpService) FullSyncFiltered(ctx context.Context, filter model.FullSyncFilter) ([]model.FullSync, error) {
@@ -644,111 +648,20 @@ func (s *ClickUpService) SyncFolders(ctx context.Context, spaceID string) error 
 	}
 	return nil
 }
-func (s *ClickUpService) SyncSpacesAndFolders(ctx context.Context) error {
-	if s.TeamID == "" {
-		return errors.New("team id not configured")
+
+func nullTimeToDateString(nt sql.NullTime) *string {
+	if !nt.Valid {
+		return nil
 	}
-
-	// 1. Sync Spaces
-	spacesURL := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/space", s.TeamID)
-	log.Println("[REQUEST] Syncing Spaces:", spacesURL)
-	spaceBytes, err := s.doRequest(ctx, "GET", spacesURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch spaces: %w", err)
-	}
-
-	var spacesResponse struct {
-		Spaces []model.SpaceInfo `json:"spaces"`
-	}
-	if err := json.Unmarshal(spaceBytes, &spacesResponse); err != nil {
-		return fmt.Errorf("failed to parse spaces response: %w", err)
-	}
-
-	log.Printf("Found %d spaces. Syncing folders for each space...", len(spacesResponse.Spaces))
-
-	for _, space := range spacesResponse.Spaces {
-		if err := s.Repo.UpsertSpace(ctx, &space); err != nil {
-			log.Printf("Failed to upsert space %s: %v", space.ID, err)
-		}
-
-		foldersURL := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/folder", space.ID)
-		log.Println("[REQUEST] Syncing Folders for Space", space.ID, ":", foldersURL)
-		folderBytes, err := s.doRequest(ctx, "GET", foldersURL)
-		if err != nil {
-			log.Printf("Could not fetch folders for space %s: %v", space.ID, err)
-			continue 
-		}
-
-		var foldersResponse struct {
-			Folders []model.Folder `json:"folders"`
-		}
-		if err := json.Unmarshal(folderBytes, &foldersResponse); err != nil {
-			log.Printf("Could not parse folders JSON for space %s: %v", space.ID, err)
-			continue
-		}
-
-		if len(foldersResponse.Folders) > 0 {
-			log.Printf("Space %s has %d folders. Syncing lists for each folder...", space.ID, len(foldersResponse.Folders))
-			for _, folder := range foldersResponse.Folders {
-				if err := s.Repo.UpsertFolder(ctx, &folder); err != nil {
-					log.Printf("Failed to upsert folder %s: %v", folder.ID, err)
-				}
-
-				listsURL := fmt.Sprintf("https://api.clickup.com/api/v2/folder/%s/list", folder.ID)
-				log.Println("[REQUEST] Syncing Lists for Folder", folder.ID, ":", listsURL)
-				listBytes, err := s.doRequest(ctx, "GET", listsURL)
-				if err != nil {
-					log.Printf("Could not fetch lists for folder %s: %v", folder.ID, err)
-					continue 
-				}
-
-				var listsResponse struct {
-					Lists []model.List `json:"lists"`
-				}
-				if err := json.Unmarshal(listBytes, &listsResponse); err != nil {
-					log.Printf("Could not parse lists JSON for folder %s: %v", folder.ID, err)
-					continue
-				}
-
-				if len(listsResponse.Lists) > 0 {
-					log.Printf("Folder %s has %d lists. Saving to DB...", folder.ID, len(listsResponse.Lists))
-					for i := range listsResponse.Lists {
-						listsResponse.Lists[i].FolderID = folder.ID      
-						listsResponse.Lists[i].SpaceID = folder.Space.ID 
-					}
-					for _, list := range listsResponse.Lists {
-						if err := s.Repo.UpsertList(ctx, &list); err != nil {
-							log.Printf("Failed to upsert list %s for folder %s: %v", list.ID, folder.ID, err)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return nil
+	s := nt.Time.Format("02-01-2006")
+	return &s
 }
 
-func (s *ClickUpService) AllSync(ctx context.Context) error {
-	log.Println("--- STARTING FULL SYNC ---")
-    if err := s.SyncTeam(ctx); err != nil {
-		return fmt.Errorf("error syncing team: %w", err)
+func toInt64Ptr(ni sql.NullInt64) *int64 {
+	if !ni.Valid {
+		return nil
 	}
-	log.Println("✅ Teams synced successfully.")
-	if err := s.SyncSpacesAndFolders(ctx); err != nil {
-		return fmt.Errorf("error syncing spaces and folders: %w", err)
-	}
-	log.Println("✅ Spaces and Folders synced successfully.")
-    if err := s.SyncMembers(ctx); err != nil {
-		return fmt.Errorf("error syncing members: %w", err)
-	}
-	log.Println("✅ Members synced successfully.")
-	if _, err := s.SyncTasks(ctx); err != nil {
-		return fmt.Errorf("error syncing tasks: %w", err)
-	}
-	log.Println("✅ Tasks synced successfully.")
-	log.Println("--- FULL SYNC COMPLETED ---")
-    return nil
+	return &ni.Int64
 }
 
 func normalizeStatus(status string) string {
@@ -768,6 +681,87 @@ func normalizeStatus(status string) string {
 	return lowerStatus 
 }
 
+func (s *ClickUpService) SyncSpacesAndFolders(ctx context.Context) error {
+	if s.TeamID == "" {
+		return errors.New("team id not configured")
+	}
+
+	// 1. Fetch and Upsert Spaces
+	spaces, err := s.fetchSpaces(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, space := range spaces {
+		log.Printf("--- Processing Space: %s (%s) ---", space.Name, space.ID)
+		if err := s.Repo.UpsertSpace(ctx, &space); err != nil {
+			log.Printf("ERROR: Failed to upsert space %s: %v", space.ID, err)
+			continue // Continue to the next space if there's an error
+		}
+
+		// 2. Fetch and Upsert Folders within the Space
+		folders, err := s.fetchFoldersForSpace(ctx, space.ID)
+		if err != nil {
+			log.Printf("WARNING: Could not fetch folders for space %s: %v", space.ID, err)
+		} else {
+			for _, folder := range folders {
+				folder.Space.ID = space.ID // Ensure relation to space is correct
+				if err := s.Repo.UpsertFolder(ctx, &folder); err != nil {
+					log.Printf("ERROR: Failed to upsert folder %s: %v", folder.ID, err)
+					continue
+				}
+
+				// 3. Fetch and Upsert Lists within each Folder
+				lists, err := s.fetchListsForFolder(ctx, folder.ID)
+				if err != nil {
+					log.Printf("WARNING: Could not fetch lists for folder %s: %v", folder.ID, err)
+				} else {
+					for i := range lists {
+						lists[i].FolderID = folder.ID
+						lists[i].SpaceID = space.ID
+					}
+					if err := s.upsertLists(ctx, lists); err != nil {
+						log.Printf("ERROR: Failed to upsert lists for folder %s: %v", folder.ID, err)
+					}
+				}
+			}
+		}
+
+		// 4. Fetch and Upsert Folderless Lists within the Space
+		folderlessLists, err := s.fetchFolderlessListsForSpace(ctx, space.ID)
+		if err != nil {
+			log.Printf("WARNING: Could not fetch folderless lists for space %s: %v", space.ID, err)
+		} else {
+			for i := range folderlessLists {
+				folderlessLists[i].SpaceID = space.ID
+			}
+			if err := s.upsertLists(ctx, folderlessLists); err != nil {
+				log.Printf("ERROR: Failed to upsert folderless lists for space %s: %v", space.ID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Helper functions to make SyncSpacesAndFolders cleaner
+
+func (s *ClickUpService) fetchSpaces(ctx context.Context) ([]model.SpaceInfo, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/space?archived=false", s.TeamID)
+	bytes, err := s.doRequest(ctx, "GET", url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch spaces: %w", err)
+	}
+	var resp struct {
+		Spaces []model.SpaceInfo `json:"spaces"`
+	}
+	if err := json.Unmarshal(bytes, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse spaces: %w", err)
+	}
+	log.Printf("Found %d active spaces.", len(resp.Spaces))
+	return resp.Spaces, nil
+}
+
 func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
 	return s.Repo.GetWorkload(ctx, time.UnixMilli(startMs), time.UnixMilli(endMs))
 }
@@ -779,6 +773,64 @@ func msToDateString(ms *int64) *string {
 	t := time.UnixMilli(*ms)
 	s := t.Format("2006-01-02")
 	return &s
+}
+
+func (s *ClickUpService) fetchFoldersForSpace(ctx context.Context, spaceID string) ([]model.Folder, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/folder?archived=false", spaceID)
+	bytes, err := s.doRequest(ctx, "GET", url)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Folders []model.Folder `json:"folders"`
+	}
+	if err := json.Unmarshal(bytes, &resp); err != nil {
+		return nil, err
+	}
+	log.Printf("Space %s has %d active folders.", spaceID, len(resp.Folders))
+	return resp.Folders, nil
+}
+
+func (s *ClickUpService) fetchListsForFolder(ctx context.Context, folderID string) ([]model.List, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/folder/%s/list?archived=false", folderID)
+	bytes, err := s.doRequest(ctx, "GET", url)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Lists []model.List `json:"lists"`
+	}
+	if err := json.Unmarshal(bytes, &resp); err != nil {
+		return nil, err
+	}
+	log.Printf("Folder %s has %d active lists.", folderID, len(resp.Lists))
+	return resp.Lists, nil
+}
+
+func (s *ClickUpService) fetchFolderlessListsForSpace(ctx context.Context, spaceID string) ([]model.List, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/list?archived=false", spaceID)
+	bytes, err := s.doRequest(ctx, "GET", url)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Lists []model.List `json:"lists"`
+	}
+	if err := json.Unmarshal(bytes, &resp); err != nil {
+		return nil, err
+	}
+	log.Printf("Space %s has %d active folderless lists.", spaceID, len(resp.Lists))
+	return resp.Lists, nil
+}
+
+func (s *ClickUpService) upsertLists(ctx context.Context, lists []model.List) error {
+	for _, list := range lists {
+		if err := s.Repo.UpsertList(ctx, &list); err != nil {
+			// Log the error but continue with other lists
+			log.Printf("ERROR: Failed to upsert list %s: %v", list.ID, err)
+		}
+	}
+	return nil
 }
 
 func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int64, sortOrder string) ([]model.TaskDetail, error) {
@@ -798,8 +850,11 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			t.due_date,
 			t.date_done,
 			t.time_spent_ms,
-			t.time_estimate
+			t.time_estimate,
+			COALESCE(l.name, f.name) as project_name
 		FROM tasks t
+		LEFT JOIN lists l ON t.list_id = l.id
+		LEFT JOIN folders f ON l.folder_id = f.id
 		WHERE
 			(t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0))
 			OR (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0))
@@ -820,6 +875,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		var taskID, taskName, statusName, description, textContent string
 		var startDate, dueDate, dateDone sql.NullTime
 		var timeSpentMs, timeEstimate sql.NullInt64
+		var projectName sql.NullString
 
 		err := rows.Scan(
 			&taskID,
@@ -832,6 +888,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			&dateDone,
 			&timeSpentMs,
 			&timeEstimate,
+			&projectName,
 		)
 		if err != nil {
 			log.Printf("Error scanning task row: %v", err)
@@ -848,6 +905,9 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			DueDate:     nullTimeToDateString(dueDate),
 			DateDone:    nullTimeToDateString(dateDone),
 			Assignees:   []model.AssigneeDetail{},
+		}
+		if projectName.Valid {
+			taskDetail.ProjectName = &projectName.String
 		}
 
 		if timeSpentMs.Valid {
@@ -903,20 +963,63 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	return result, nil
 }
 
-func nullTimeToDateString(nt sql.NullTime) *string {
-	if !nt.Valid {
-		return nil
+// func nullTimeToDateString(nt sql.NullTime) *string {
+// 	if !nt.Valid {
+// 		return nil
+// 	}
+// 	s := nt.Time.Format("02-01-2006")
+// 	return &s
+// }
+
+// func toInt64Ptr(ni sql.NullInt64) *int64 {
+// 	if !ni.Valid {
+// 		return nil
+// 	}
+// 	return &ni.Int64
+// }
+
+func (s *ClickUpService) AllSync(ctx context.Context) error {
+	log.Println("--- STARTING ALL SYNC ---")
+    if err := s.SyncTeam(ctx); err != nil {
+		return fmt.Errorf("error syncing team: %w", err)
 	}
-	s := nt.Time.Format("02-01-2006")
-	return &s
+	log.Println("✅ Spaces (from Team) synced successfully.")
+	if err := s.SyncSpacesAndFolders(ctx); err != nil {
+		return fmt.Errorf("error syncing spaces and folders: %w", err)
+	}
+	log.Println("✅ Spaces and Folders synced successfully.")
+    if err := s.SyncMembers(ctx); err != nil {
+		return fmt.Errorf("error syncing members: %w", err)
+	}
+	log.Println("✅ Members synced successfully.")
+	if _, err := s.SyncTasks(ctx); err != nil {
+		return fmt.Errorf("error syncing tasks: %w", err)
+	}
+	log.Println("✅ Tasks synced successfully.")
+	log.Println("--- ALL SYNC COMPLETED ---")
+    return nil
 }
 
-func toInt64Ptr(ni sql.NullInt64) *int64 {
-	if !ni.Valid {
-		return nil
-	}
-	return &ni.Int64
-}
+// func normalizeStatus(status string) string {
+// 	lowerStatus := strings.ToLower(status)
+// 	if strings.Contains(lowerStatus, "review") || strings.Contains(lowerStatus, "progress") {
+// 		return "progres"
+// 	}
+// 	if strings.Contains(lowerStatus, "do") {
+// 		return "to do"
+// 	}
+// 	if strings.Contains(lowerStatus, "done") || strings.Contains(lowerStatus, "complete") || strings.Contains(lowerStatus, "closed") {
+// 		return "done"
+// 	}
+// 	if strings.Contains(lowerStatus, "cancel") {
+// 		return "canceled"
+// 	}
+// 	return lowerStatus 
+// }
+
+// func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
+// 	return s.Repo.GetWorkload(ctx, time.UnixMilli(startMs), time.UnixMilli(endMs))
+// }
 
 func WorkingDaysBetween(start, end time.Time) int {
 	if end.Before(start) {

@@ -9,12 +9,12 @@ package handlers
 // )
 
 // type WorkloadHandler struct {
-// 	Work *service.WorkloadService
-// 	Click *service.ClickUpService
+// 	workloadSvc *service.WorkloadService
+// 	clickupSvc  *service.ClickUpService
 // }
 
 // func NewWorkloadHandler(w *service.WorkloadService, c *service.ClickUpService) *WorkloadHandler {
-// 	return &WorkloadHandler{Work: w, Click: c}
+// 	return &WorkloadHandler{workloadSvc: w, clickupSvc: c}
 // }
 
 // func (h *WorkloadHandler) GetWorkload(c *gin.Context) {
@@ -39,30 +39,42 @@ package handlers
 // 		return
 // 	}
 
-// 	resp, err := h.Work.BuildWorkload(c.Request.Context(), start, end, posisi, source, name)
+	// resp, err := h.Work.BuildWorkload(c.Request.Context(), start, end, posisi, source, name)
+	// if err != nil {
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// 	return
+	// }
+	// c.JSON(http.StatusOK, resp)
+// }
+
+// func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
+// 	startDateStr := c.Query("start_date")
+// 	endDateStr := c.Query("end_date")
+// 	name := c.Query("name")
+// 	email := c.Query("email")
+
+// 	if startDateStr == "" || endDateStr == "" {
+// 		c.JSON(http.StatusBadRequest, gin.H{"error": "start_date and end_date are required"})
+// 		return
+// 	}
+
+// 	startDate, err := time.Parse("2006-01-02", startDateStr)
+// 	if err != nil {
+// 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start_date format, use YYYY-MM-DD"})
+// 		return
+// 	}
+
+// 	endDate, err := time.Parse("2006-01-02", endDateStr)
+// 	if err != nil {
+// 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end_date format, use YYYY-MM-DD"})
+// 		return
+// 	}
+
+// 	summary, err := h.workloadSvc.GetTasksSummary(c.Request.Context(), startDate, endDate, name, email)
 // 	if err != nil {
 // 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 // 		return
 // 	}
-// 	c.JSON(http.StatusOK, resp)
-// }
 
-// func (h *WorkloadHandler) SyncAll(c *gin.Context) {
-// 	ctx := c.Request.Context()
-// 	if err := h.Click.SyncTeam(ctx); err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "sync team: " + err.Error()})
-// 		return
-// 	}
-// 	// sync members
-// 	if err := h.Click.SyncMembers(ctx); err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "sync members: " + err.Error()})
-// 		return
-// 	}
-// 	// sync tasks
-// 	count, err := h.Click.SyncTasks(ctx)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "sync tasks: " + err.Error()})
-// 		return
-// 	}
-// 	c.JSON(http.StatusOK, gin.H{"status": "ok", "synced_tasks": count})
+// 	c.JSON(http.StatusOK, summary)
 // }

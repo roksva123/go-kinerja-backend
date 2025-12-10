@@ -22,98 +22,62 @@ func NewWorkloadHandler(workloadSvc *service.WorkloadService, clickupSvc *servic
 }
 
 func (h *WorkloadHandler) GetTasksSummary(c *gin.Context) {
-	var startMs, endMs *int64
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+	name := c.Query("name")
+	email := c.Query("email")
 
-	var startDate, endDate time.Time
-	var err error
-
-	if startDateStr := c.Query("start_date"); startDateStr != "" {
-		t, err := time.Parse("02-01-2006", startDateStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid start_date format. Use DD-MM-YYYY"})
-			return
-		}
-		startDate = t
-		startOfDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-		ms := startOfDay.UnixMilli()
-		startMs = &ms
-	}
-
-	if endDateStr := c.Query("end_date"); endDateStr != "" {
-		t, err := time.Parse("02-01-2006", endDateStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid end_date format. Use DD-MM-YYYY"})
-			return
-		}
-		endDate = t
-		endOfDay := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
-		ms := endOfDay.UnixMilli()
-		endMs = &ms
-	}
-
-	username := c.Query("username")
-
-	dbSummary, err := h.workloadSvc.GetTasksSummary(c.Request.Context(), startMs, endMs, username)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get tasks summary: " + err.Error()})
+	if startDateStr == "" || endDateStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start_date and end_date are required"})
 		return
 	}
 
-	var expectedWorkHours float64
-	if !startDate.IsZero() && !endDate.IsZero() {
-		workingDays := service.WorkingDaysBetween(startDate, endDate)
-		expectedWorkHours = float64(workingDays * 8)
+	layout := "02-01-2006"
+	startDate, err := time.Parse(layout, startDateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid start_date format. Use DD-MM-YYYY"})
+		return
 	}
 
-	dbSummary.TotalWorkHours = expectedWorkHours
+	endDate, err := time.Parse(layout, endDateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid end_date format. Use DD-MM-YYYY"})
+		return
+	}
 
-	c.JSON(http.StatusOK, dbSummary)
+	summary, err := h.workloadSvc.GetTasksSummary(c.Request.Context(), startDate, endDate, name, email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
 }
 
 func (h *WorkloadHandler) GetWorkload(c *gin.Context) {
 	startStr := c.Query("start")
 	endStr := c.Query("end")
+	username := c.Query("username")
 
-	layout := "02-01-2006"
+
+	layout := "2006-01-02" 
 	start, err := time.Parse(layout, startStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start date format, use DD-MM-YYYY"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid start date format, use DD-MM-YYYY", "details": err.Error()})
 		return
 	}
 	end, err := time.Parse(layout, endStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end date format, use DD-MM-YYYY"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid end date format, use DD-MM-YYYY", "details": err.Error()})
 		return
 	}
 
-	// Convert to Unix milliseconds
-	startMs := start.UnixMilli()
-	endMs := end.UnixMilli()
-
-	users, err := h.clickupSvc.GetWorkload(c.Request.Context(), startMs, endMs)
+	users, err := h.workloadSvc.GetWorkload(c.Request.Context(), start, end, username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	totalHoursAll := 0.0
-	for _, u := range users {
-		totalHoursAll += u.TotalHours
-	}
-	avgHours := 0.0
-	if len(users) > 0 {
-		avgHours = totalHoursAll / float64(len(users))
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"start": startStr,
-		"end":   endStr,
-		"summary": gin.H{
-			"total_users": len(users),
-			"total_hours": totalHoursAll,
-			"avg_hours":   avgHours,
-		},
-		"users": users,
-	})
+	c.JSON(http.StatusOK, users)
 }
 
 func (h *WorkloadHandler) SyncAll(c *gin.Context) {

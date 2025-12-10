@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"os"
 	"time"
 
@@ -171,6 +172,13 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         created_at TIMESTAMPTZ DEFAULT now(),
         updated_at TIMESTAMPTZ DEFAULT now()
     );`,
+    `CREATE TABLE IF NOT EXISTS spaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        archived BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+    );`,
     `CREATE TABLE IF NOT EXISTS lists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -299,15 +307,8 @@ func (r *PostgresRepo) UpsertTaskAssignees(ctx context.Context, taskID string, a
 
 // UpsertTeam
 func (r *PostgresRepo) UpsertTeam(ctx context.Context, teamID, name, parentID string) error {
-	_, err := r.DB.ExecContext(ctx, `
-		INSERT INTO teams (team_id, name, parent_id)
-		VALUES ($1,$2,$3)
-		ON CONFLICT (team_id) DO UPDATE SET
-			name = EXCLUDED.name,
-			parent_id = EXCLUDED.parent_id,
-			updated_at = now()
-	`, teamID, name, parentID)
-	return err
+	log.Printf("UpsertTeam is deprecated, use UpsertSpace instead. Called with teamID: %s", teamID)
+	return nil
 }
 
 // UpsertUser
@@ -316,22 +317,17 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
 		INSERT INTO users (clickup_id, name, email, role_id, status_id)
 		VALUES (
 			$1, $2, $3,
-			(SELECT id FROM roles WHERE LOWER(name) = LOWER($4) LIMIT 1),
-			(SELECT id FROM user_statuses WHERE LOWER(name) = LOWER($5) LIMIT 1)
+			(SELECT id FROM roles WHERE name ILIKE $4 LIMIT 1),
+			(SELECT id FROM user_statuses WHERE name ILIKE $5 LIMIT 1)
 		)
 		ON CONFLICT (clickup_id) DO UPDATE SET
 			name = EXCLUDED.name,
 			email = EXCLUDED.email,
-			-- Update role_id only if a new, valid role is provided.
-			-- Otherwise, keep the existing role_id.
-			role_id = CASE 
-				WHEN $4 <> '' THEN (SELECT id FROM roles WHERE LOWER(name) = LOWER($4) LIMIT 1)
-				ELSE users.role_id
-			END,
-			status_id = (SELECT id FROM user_statuses WHERE LOWER(name) = LOWER($5) LIMIT 1),
+			role_id = COALESCE((SELECT id FROM roles WHERE name ILIKE $6 LIMIT 1), users.role_id),
+			status_id = (SELECT id FROM user_statuses WHERE name ILIKE $7 LIMIT 1),
 			updated_at = now()
 	`
-	_, err := r.DB.ExecContext(ctx, query, u.ClickUpID, u.Name, u.Email, u.Role, u.Status)
+	_, err := r.DB.ExecContext(ctx, query, u.ClickUpID, u.Name, u.Email, u.Role, u.Status, u.Role, u.Status)
 	if err != nil {
 		log.Printf("Error upserting user: %v", err)
 	}
@@ -340,9 +336,9 @@ func (r *PostgresRepo) UpsertUser(ctx context.Context, u *model.User) error {
 
 func (r *PostgresRepo) UpsertSpace(ctx context.Context, space *model.SpaceInfo) error {
 	query := `
-		INSERT INTO teams (team_id, name)
+		INSERT INTO spaces (id, name)
 		VALUES ($1, $2)
-		ON CONFLICT (team_id) DO UPDATE SET
+		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			updated_at = now();
 	`
@@ -352,14 +348,15 @@ func (r *PostgresRepo) UpsertSpace(ctx context.Context, space *model.SpaceInfo) 
 
 func (r *PostgresRepo) UpsertFolder(ctx context.Context, folder *model.Folder) error {
 	query := `
-		INSERT INTO folders (id, name, space_id)
-		VALUES ($1, $2, $3)
+		INSERT INTO folders (id, name, archived, space_id)
+		VALUES ($1, $2, $3, NULLIF($4, ''))
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
-			space_id = EXCLUDED.space_id,
+			archived = EXCLUDED.archived,
+			space_id = COALESCE(NULLIF(EXCLUDED.space_id, ''), folders.space_id),
 			updated_at = now();
 	`
-	_, err := r.DB.ExecContext(ctx, query, folder.ID, folder.Name, folder.Space.ID)
+	_, err := r.DB.ExecContext(ctx, query, folder.ID, folder.Name, folder.Archived, folder.Space.ID)
 	return err
 }
 
@@ -388,8 +385,8 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
         INSERT INTO tasks (
             id, name, text_content, description,
             status_id, status_name, status_type,
-            date_done, date_closed, start_date, due_date, time_estimate, time_spent_ms)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, 0), COALESCE($13, 0))
+            date_done, date_closed, start_date, due_date, time_estimate, time_spent_ms, list_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, 0), COALESCE($13, 0), $14)
         ON CONFLICT (id)
         DO UPDATE SET
             name = EXCLUDED.name,
@@ -403,6 +400,7 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
             due_date = EXCLUDED.due_date,
             time_estimate = COALESCE(EXCLUDED.time_estimate, 0),
             time_spent_ms = COALESCE(EXCLUDED.time_spent_ms, 0),
+            list_id = EXCLUDED.list_id,
             updated_at = now()
     `
 
@@ -420,6 +418,7 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
         t.DueDate,       
         t.TimeEstimate,
         t.TimeSpentMs,
+        t.ListID,
     )
 
     return err
@@ -577,25 +576,21 @@ func (r *PostgresRepo) GetMembers(ctx context.Context) ([]model.User, error) {
     return out, nil
 }
 
-// GetTeams
-func (r *PostgresRepo) GetTeams(ctx context.Context) ([]model.Team, error) {
-    q := `SELECT team_id, name, parent_id, created_at, updated_at FROM teams ORDER BY name`
+// GetSpaces
+func (r *PostgresRepo) GetSpaces(ctx context.Context) ([]model.SpaceInfo, error) {
+    q := `SELECT id, name FROM spaces ORDER BY name`
     rows, err := r.DB.QueryContext(ctx, q)
     if err != nil {
         return nil, err
     }
     defer rows.Close()
-    var out []model.Team
+    var out []model.SpaceInfo
     for rows.Next() {
-        var t model.Team
-        var parent sql.NullString
-        if err := rows.Scan(&t.TeamID, &t.Name, &parent, &t.CreatedAt, &t.UpdatedAt); err != nil {
+        var s model.SpaceInfo
+        if err := rows.Scan(&s.ID, &s.Name); err != nil {
             return nil, err
         }
-        if parent.Valid {
-            t.ParentID = &parent.String
-        }
-        out = append(out, t)
+        out = append(out, s)
     }
     return out, nil
 }
@@ -605,7 +600,17 @@ func (r *PostgresRepo) GetTeams(ctx context.Context) ([]model.Team, error) {
 // GetFullSyncFiltered 
 func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int64, role string) ([]model.TaskWithMember, error) {
 
-    q := `SELECT 1` 
+    q := `
+        SELECT 
+            t.id, t.name, t.status_name,
+            t.start_date, t.date_done, t.date_closed,
+            u.clickup_id, u.name, u.email, COALESCE(r.name, '')
+        FROM tasks t
+        LEFT JOIN task_assignees ta ON t.id = ta.task_id
+        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE 1=1
+    ` 
 
     args := []interface{}{}
     idx := 1
@@ -613,9 +618,8 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
     if start != nil && end != nil {
         q += fmt.Sprintf(`
             AND (
-                (t.date_created IS NOT NULL AND t.date_created BETWEEN $%d AND $%d) OR
-                (t.date_done IS NOT NULL AND t.date_done BETWEEN $%d AND $%d) OR
-                (t.date_closed IS NOT NULL AND t.date_closed BETWEEN $%d AND $%d)
+                (t.start_date IS NOT NULL AND t.start_date BETWEEN to_timestamp($%[1]d / 1000.0) AND to_timestamp($%[2]d / 1000.0)) OR
+                (t.date_done IS NOT NULL AND t.date_done BETWEEN to_timestamp($%[1]d / 1000.0) AND to_timestamp($%[2]d / 1000.0))
             )
         `, idx, idx+1, idx, idx+1, idx, idx+1)
 
@@ -624,11 +628,12 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
     }
 
     if role != "" {
+        q += fmt.Sprintf(" AND r.name = $%d", idx)
         args = append(args, role)
         idx++
     }
 
-    q += " ORDER BY t.date_created DESC "
+    q += " ORDER BY t.start_date DESC "
 
     rows, err := r.DB.QueryContext(ctx, q, args...)
     if err != nil {
@@ -643,10 +648,11 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
         var mID sql.NullInt64
         var mU, mE, mC sql.NullString
         
+        var startDate, dateDone, dateClosed sql.NullTime
 
         err := rows.Scan(
             &t.TaskID, &t.TaskName, &t.TaskStatus,
-            &t.DateCreated, &t.DateDone, &t.DateClosed,
+            &startDate, &dateDone, &dateClosed,
             &mID, &mU, &mE, &mC,
         )
         if err != nil {
@@ -654,6 +660,9 @@ func (r *PostgresRepo) GetFullSyncFiltered(ctx context.Context, start, end *int6
         }
 
         if mID.Valid {
+            if startDate.Valid { t.StartDate = &startDate.Time }
+            if dateDone.Valid { t.DateDone = &dateDone.Time }
+            if dateClosed.Valid { t.DateClosed = &dateClosed.Time }
             t.UserID = mID.Int64
             t.Username = mU.String
             t.Email = mE.String
@@ -754,28 +763,37 @@ func (r *PostgresRepo) GetTasksByRange(
     endMs *int64,
     username string,
     status string,
-) ([]model.Task, error) {
+    folderIDs []string,
+) ([]model.TaskFull, error) {
 
     query := `
         SELECT
             t.id,
             t.name,
-            t.text_content,
+            t.text_content, 
             t.description,
-            t.status_id,
+            t.status_id,    
             t.status_name,
             t.status_type,
+            '' AS status_color,
+            f.name AS project_name,
             t.date_done,
             t.date_closed,
             t.start_date,
             t.due_date,
+            t.time_estimate, 
             t.time_spent_ms,
-            u.name,
+            u.clickup_id,
+            u.name AS user_name,
             u.email,
-            '' as color -- Placeholder for color if not in users table
+            r.name AS user_role,
+            '' AS user_color 
         FROM tasks t
         LEFT JOIN task_assignees ta ON t.id = ta.task_id
-        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id -- Join with users table
+        LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id 
+        LEFT JOIN lists l ON t.list_id = l.id
+        LEFT JOIN folders f ON l.folder_id = f.id
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE 1=1
     `
 
@@ -783,14 +801,16 @@ func (r *PostgresRepo) GetTasksByRange(
     i := 1
 
     if startMs != nil && endMs != nil {
+        startTime := time.UnixMilli(*startMs)
+        endTime := time.UnixMilli(*endMs)
         query += fmt.Sprintf(`
             AND (
-                (t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0)) OR
-                (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0)) OR
-                (t.date_closed >= to_timestamp($1 / 1000.0) AND t.date_closed <= to_timestamp($2 / 1000.0))
+                (t.start_date IS NOT NULL AND t.due_date IS NOT NULL AND t.start_date <= $%d AND t.due_date >= $%d) OR
+                (t.date_done IS NOT NULL AND t.date_done BETWEEN $%d AND $%d) OR
+                (t.date_closed IS NOT NULL AND t.date_closed BETWEEN $%d AND $%d)
             )
-        `)
-        args = append(args, *startMs, *endMs)
+        `, i+1, i, i, i+1)
+        args = append(args, startTime, endTime)
         i += 2
     }
     if username != "" {
@@ -803,6 +823,19 @@ func (r *PostgresRepo) GetTasksByRange(
         query += fmt.Sprintf(" AND status_name = $%d", i)
         args = append(args, status)
         i++
+    }
+
+    // Filter by folderIDs (new requirement)
+    if len(folderIDs) > 0 {
+        folderPlaceholders := make([]string, len(folderIDs))
+        for j := range folderIDs {
+            folderPlaceholders[j] = fmt.Sprintf("$%d", i+j)
+        }
+        query += fmt.Sprintf(" AND l.folder_id IN (%s)", strings.Join(folderPlaceholders, ","))
+        for _, id := range folderIDs {
+            args = append(args, id)
+        }
+        i += len(folderIDs)
     }
 
     query += " ORDER BY t.start_date DESC, t.name ASC"
@@ -819,54 +852,110 @@ func (r *PostgresRepo) GetTasksByRange(
     }
     defer rows.Close()
 
-    var list []model.Task
+    var tasks []model.TaskFull
 
     for rows.Next() {
-        var t model.Task
+        var (
+            tf model.TaskFull
+
+            textContent sql.NullString 
+            statusID    sql.NullString 
+            projectName                               sql.NullString
+            startDate, dueDate, dateDone, dateClosed  sql.NullTime
+            timeEstimate, timeSpent, userID           sql.NullInt64
+            assigneeName, assigneeEmail, userRole, userColor sql.NullString
+        )
 
         err := rows.Scan(
-            &t.ID,
-            &t.Name,
-            &t.TextContent,
-            &t.Description,
-            &t.Status.ID,
-            &t.Status.Name,
-            &t.Status.Type,
-            &t.DateDone,
-            &t.DateClosed,
-            &t.StartDate,
-            &t.DueDate,
-            &t.TimeSpentMs,
-            &t.AssigneeUsername,
-            &t.AssigneeEmail,
-            &t.AssigneeColor,
+            &tf.TaskID,
+            &tf.TaskName,
+            &textContent,   
+            &tf.Description,
+            &statusID,      
+            &tf.StatusName,
+            &tf.StatusType,
+            &tf.StatusColor, 
+            &projectName,
+            &dateDone,
+            &dateClosed,
+            &startDate,
+            &dueDate,
+            &timeEstimate,
+            &timeSpent,
+            &userID,
+            &assigneeName,
+            &assigneeEmail,
+            &userRole,
+            &userColor, 
         )
 
         if err != nil {
             log.Println("Scan ERROR:", err)
             return nil, err
         }
+        
+        if projectName.Valid {
+            tf.ProjectName = &projectName.String
+        }
+        if startDate.Valid {
+            tf.StartDate = &startDate.Time
+        }
+        if dueDate.Valid {
+            tf.DueDate = &dueDate.Time
+        }
+        if dateDone.Valid {
+            tf.DateDone = &dateDone.Time
+        }
+        if dateClosed.Valid {
+            tf.DateClosed = &dateClosed.Time
+        }
+        if userID.Valid {
+            tf.UserID = &userID.Int64
+        }
+        if assigneeName.Valid {
+            tf.Username = &assigneeName.String
+        }
+        if assigneeEmail.Valid {
+            tf.Email = &assigneeEmail.String
+        }
+        if userRole.Valid {
+            tf.Role = &userRole.String
+        }
+        if userColor.Valid {
+            tf.Color = &userColor.String
+        }
 
-        list = append(list, t)
+        if timeEstimate.Valid {
+            tf.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0 
+        }
+        if timeSpent.Valid {
+            tf.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0 
+        }
+
+        tasks = append(tasks, tf)
     }
 
-    log.Printf("=== FOUND %d TASKS ===", len(list))
+    log.Printf("=== FOUND %d TASKS ===", len(tasks))
 
-    for _, tt := range list {
+    for _, tt := range tasks {
         log.Printf(
             "TASK: %-40s | UID: %v | UN: %-20s | EMAIL: %-30s | START: %v | DUE: %v | SPENT: %v",
-            tt.Name,
-            tt.AssigneeUserID,
-            tt.AssigneeUsername,
-            tt.AssigneeEmail,
+            tt.TaskName,
+            tt.UserID,
+            tt.Username,
+            tt.Email,
             tt.StartDate,
             tt.DueDate,
-            tt.TimeSpentMs,
+            tt.TimeSpentHours,
         )
     }
 
-    return list, nil
+    return tasks, nil
 }
+
+
+
+
 
 
 
@@ -894,7 +983,7 @@ func (r *PostgresRepo) GetTasksFull(
             t.date_closed,
             t.time_estimate,
             t.time_spent_ms,
-            l.name AS project_name,
+            f.name AS project_name,
             u.clickup_id,
             u.name AS user_name,
             u.email,
@@ -903,6 +992,7 @@ func (r *PostgresRepo) GetTasksFull(
         LEFT JOIN task_assignees ta ON t.id = ta.task_id
         LEFT JOIN users u ON ta.user_clickup_id = u.clickup_id
         LEFT JOIN lists l ON t.list_id = l.id
+        LEFT JOIN folders f ON l.folder_id = f.id
         LEFT JOIN roles r ON u.role_id = r.id
         WHERE 1=1
     `
@@ -1220,7 +1310,7 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
         if dateClosed.Valid { t.DateClosed = &dateClosed.Time }
         if startDate.Valid { t.StartDate = &startDate.Time }
         if dueDate.Valid { t.DueDate = &dueDate.Time }
-        if timeEstimate.Valid { t.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0 }
+        if timeEstimate.Valid { t.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0 }
         if timeSpent.Valid { t.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0 }
 
         tasks = append(tasks, t)
@@ -1257,7 +1347,7 @@ func (r *PostgresRepo) GetTasksSummary(
                 (t.date_done >= to_timestamp($%d / 1000.0) AND t.date_done <= to_timestamp($%d / 1000.0)) OR
                 (t.date_closed >= to_timestamp($%d / 1000.0) AND t.date_closed <= to_timestamp($%d / 1000.0))
             )
-        `, i+1, i, i, i+1, i, i+1) // Note: order is end, start for range overlap
+        `, i+1, i, i, i+1, i, i+1) 
 		args = append(args, *startMs, *endMs)
 		i += 2
 	}
@@ -1286,12 +1376,96 @@ func (r *PostgresRepo) GetTasksSummary(
 
 	summary := &model.TaskSummary{
 		TotalTasks:         totalTasks,
-		// TotalWorkHours akan dihitung di handler
-		ActualWorkHours:    float64(totalTimeSpent) / 3600000.0, // Konversi dari ms ke jam
-		TotalUpcomingHours: float64(totalTimeEstimate) / 60.0,   // Konversi dari menit ke jam
+		ActualWorkHours:    float64(totalTimeSpent) / 3600000.0, 
+		TotalUpcomingHours: float64(totalTimeEstimate) / 3600000.0,   
 	}
 
 	return summary, nil
+}
+
+func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, end time.Time) ([]model.TaskSummary, error) {
+	query := `
+		SELECT
+			u.clickup_id,
+			u.name,
+			u.email,
+			COUNT(t.id) AS total_tasks,
+			COALESCE(SUM(t.time_spent_ms), 0) AS total_time_spent,
+			COALESCE(SUM(CASE WHEN t.status_type = 'open' THEN t.time_estimate ELSE 0 END), 0) AS total_upcoming_estimate
+		FROM users u
+		LEFT JOIN task_assignees ta ON u.clickup_id = ta.user_clickup_id
+		LEFT JOIN tasks t ON ta.task_id = t.id AND (
+			(t.start_date IS NOT NULL AND t.due_date IS NOT NULL AND t.start_date <= $2 AND t.due_date >= $1) OR
+            (t.date_done IS NOT NULL AND t.date_done BETWEEN $1 AND $2) OR
+            (t.date_closed IS NOT NULL AND t.date_closed BETWEEN $1 AND $2)
+		)
+		WHERE u.status_id = (SELECT id FROM user_statuses WHERE name = 'aktif')
+		GROUP BY u.clickup_id, u.name, u.email
+		ORDER BY u.name ASC;
+	`
+
+	rows, err := r.DB.QueryContext(ctx, query, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("querying tasks summary by date range failed: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []model.TaskSummary
+	workingDays := calculateWorkingDays(start, end)
+	expectedWorkHours := float64(workingDays * 8)
+
+	for rows.Next() {
+		var s model.TaskSummary
+		var totalTimeSpent, totalUpcomingEstimate int64
+
+		if err := rows.Scan(
+			&s.UserID,
+			&s.Name,
+			&s.Email,
+			&s.TotalTasks,
+			&totalTimeSpent,
+			&totalUpcomingEstimate,
+		); err != nil {
+			return nil, fmt.Errorf("scanning task summary row failed: %w", err)
+		}
+
+		s.ActualWorkHours = float64(totalTimeSpent) / 3600000.0    
+		s.TotalUpcomingHours = float64(totalUpcomingEstimate) / 3600000.0 
+		s.TotalWorkHours = expectedWorkHours
+
+		summaries = append(summaries, s)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during rows iteration for task summary: %w", err)
+	}
+
+	return summaries, nil
+}
+
+func (r *PostgresRepo) GetFolders(ctx context.Context) ([]model.Folder, error) {
+	query := `
+		SELECT f.id, f.name, f.archived, f.space_id, COALESCE(s.name, '') as space_name
+		FROM folders f
+		LEFT JOIN spaces s ON f.space_id = s.id
+		ORDER BY s.name, f.name
+	`
+	rows, err := r.DB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var folders []model.Folder
+	for rows.Next() {
+		var f model.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.Archived, &f.Space.ID, &f.Space.Name); err != nil {
+			return nil, err
+		}
+		folders = append(folders, f)
+	}
+
+	return folders, nil
 }
 
 func (r *PostgresRepo) GetLists(ctx context.Context) ([]model.List, error) {

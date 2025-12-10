@@ -72,27 +72,20 @@ func (h *ClickUpHandler) GetMembers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"users": users})
 }
 
-func (h *ClickUpHandler) GetTeams(c *gin.Context) {
-	teams, err := h.Click.GetTeams(c.Request.Context())
+func (h *ClickUpHandler) GetSpaces(c *gin.Context) {
+	spaces, err := h.Click.GetSpaces(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"teams": teams})
-}
-
-func (h *ClickUpHandler) GetFullSync(c *gin.Context) {
-	data, err := h.Click.FullSync(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, data)
+	c.JSON(http.StatusOK, gin.H{"spaces": spaces})
 }
 
 func (h *ClickUpHandler) GetFullSyncFiltered(c *gin.Context) {
 	var filter model.FullSyncFilter
 
+	filter.Username = c.Query("username")
+	filter.Email = c.Query("email")
 	filter.Role = c.Query("role")
 	filter.Range = c.Query("range")
 

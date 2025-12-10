@@ -152,6 +152,9 @@ type TaskResponse struct {
 }
 
 type TaskSummary struct {
+	UserID             int64   `json:"user_id"`
+	Name               string  `json:"name"`
+	Email              string  `json:"email"`
 	TotalTasks         int     `json:"total_tasks"`
 	TotalWorkHours     float64 `json:"total_work_hours"`
 	ActualWorkHours    float64 `json:"actual_work_hours"`
@@ -173,6 +176,27 @@ type TaskAssignee struct {
     Username  string  `json:"username"`
     Color     string  `json:"color"`
     Initials  string  `json:"initials"`
+}
+
+// AssigneeWithTasks represents a user with their grouped tasks and summary.
+type AssigneeWithTasks struct {
+	ClickUpID          int64       `json:"clickup_id"`
+	Username           string      `json:"username"`
+	Email              string      `json:"email"`
+	Name               string      `json:"name"`
+	TotalSpentHours    float64     `json:"total_spent_hours"`
+	ExpectedHours      float64     `json:"expected_hours"`
+	TotalTasks         int         `json:"total_tasks"`
+	ActualWorkHours    float64     `json:"actual_work_hours"`
+	TotalUpcomingHours float64     `json:"total_upcoming_hours"`
+	Tasks              []TaskItem  `json:"tasks"`
+}
+
+// TasksByAssigneeResponse is the model for the final API response.
+type TasksByAssigneeResponse struct {
+	Count     int                 `json:"count"`
+	Assignees []AssigneeWithTasks `json:"assignees"`
+
     Email     string  `json:"email"`
     Profile   *string `json:"profilePicture"`
 }

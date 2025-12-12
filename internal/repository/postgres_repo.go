@@ -489,8 +489,7 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
         FROM tasks
         ORDER BY COALESCE(date_done, 0) DESC
     `
-    // Note: This query is likely simplified and might need joins to `task_statuses`
-    // For this example, I'll assume the intent is to show how scanning changes.
+
 
     rows, err := r.DB.QueryContext(ctx, q)
     if err != nil {

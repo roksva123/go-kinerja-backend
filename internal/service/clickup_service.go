@@ -293,12 +293,11 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 
             rawTimeEstimate := parseInt64Ptr(raw["time_estimate"])
             if rawTimeEstimate != nil {
-                minutes := *rawTimeEstimate / 60000
-                t.TimeEstimate = &minutes
+                t.TimeEstimate = rawTimeEstimate // Store as milliseconds
             } else {
-				// Jika tidak ada estimasi, set default 8 jam (480 menit)
-				defaultMinutes := int64(480)
-				t.TimeEstimate = &defaultMinutes
+				// Jika tidak ada estimasi, set default 8 jam (dalam milidetik)
+				defaultMilliseconds := int64(8 * 3600000)
+				t.TimeEstimate = &defaultMilliseconds
 			}
 
             if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
@@ -826,7 +825,6 @@ func (s *ClickUpService) fetchFolderlessListsForSpace(ctx context.Context, space
 func (s *ClickUpService) upsertLists(ctx context.Context, lists []model.List) error {
 	for _, list := range lists {
 		if err := s.Repo.UpsertList(ctx, &list); err != nil {
-			// Log the error but continue with other lists
 			log.Printf("ERROR: Failed to upsert list %s: %v", list.ID, err)
 		}
 	}
@@ -915,7 +913,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 		}
 
 		if timeEstimate.Valid {
-			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0
+			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
 		}
 
 		if timeSpentMs.Valid {

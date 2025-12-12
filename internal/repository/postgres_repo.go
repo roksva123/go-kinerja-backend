@@ -953,13 +953,6 @@ func (r *PostgresRepo) GetTasksByRange(
     return tasks, nil
 }
 
-
-
-
-
-
-
-
 func (r *PostgresRepo) GetTasksFull(
     ctx context.Context,
     startMs *int64,
@@ -1001,14 +994,15 @@ func (r *PostgresRepo) GetTasksFull(
     i := 1
 
     if startMs != nil && endMs != nil {
+        startTime := time.UnixMilli(*startMs)
+        endTime := time.UnixMilli(*endMs)
         q += fmt.Sprintf(`
             AND (
-                (t.start_date <= to_timestamp($2 / 1000.0) AND t.due_date >= to_timestamp($1 / 1000.0)) OR
-                (t.date_done >= to_timestamp($1 / 1000.0) AND t.date_done <= to_timestamp($2 / 1000.0)) OR
-                (t.date_closed >= to_timestamp($1 / 1000.0) AND t.date_closed <= to_timestamp($2 / 1000.0))
+                (t.start_date IS NOT NULL AND t.due_date IS NOT NULL AND t.start_date <= $%d AND t.due_date >= $%d) OR
+                (t.date_done IS NOT NULL AND t.date_done BETWEEN $%d AND $%d)
             )
-        `)
-        args = append(args, *startMs, *endMs)
+        `, i+1, i, i, i+1)
+        args = append(args, startTime, endTime)
         i += 2
     }
 
@@ -1095,7 +1089,7 @@ func (r *PostgresRepo) GetTasksFull(
 		}
 
         if timeEstimate.Valid {
-			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 60.0
+			tf.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
 		}
         if timeSpent.Valid {
 			tf.TimeSpentHours = float64(timeSpent.Int64) / 3600000.0

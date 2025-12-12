@@ -1,7 +1,5 @@
 package handlers
 
-// TaskInResponse adalah struct untuk tugas yang akan ditampilkan di dalam respons,
-// tanpa menyertakan field 'assignees' yang berulang.
 type TaskInResponse struct {
 	ID                string   `json:"id"`
 	Name              string   `json:"name"`
@@ -16,7 +14,6 @@ type TaskInResponse struct {
 	TimeSpentHours    float64  `json:"time_spent_hours"`
 }
 
-// AssigneeWithTasks adalah struct untuk menampung data assignee beserta daftar tugasnya.
 type AssigneeWithTasks struct {
 	ClickupID       int              `json:"clickup_id"`
 	Username        string           `json:"username"`
@@ -24,10 +21,13 @@ type AssigneeWithTasks struct {
 	Name            string           `json:"name"`
 	TotalSpentHours float64          `json:"total_spent_hours"`
 	ExpectedHours   float64          `json:"expected_hours"`
+	TotalTasks      int              `json:"total_tasks"`
+	TotalWorkHours  float64          `json:"total_work_hours"`
+	ActualWorkHours float64          `json:"actual_work_hours"`
+	TotalUpcomingHours float64       `json:"total_upcoming_hours"`
 	Tasks           []TaskInResponse `json:"tasks"`
 }
 
-// TasksByAssigneeResponse adalah struct untuk respons akhir dari endpoint.
 type TasksByAssigneeResponse struct {
 	Count     int                 `json:"count"`
 	Assignees []AssigneeWithTasks `json:"assignees"`

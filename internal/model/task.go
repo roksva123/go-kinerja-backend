@@ -52,8 +52,9 @@ type TaskWithMember struct {
 	DateDone     *time.Time `json:"date_done"`
 	DateClosed   *time.Time `json:"date_closed"`
 	TimeEstimate *int64 `json:"-"` 
-	TimeEstimateHours float64 `json:"time_estimate_hours"`
-	TimeSpent    *int64 `json:"time_spent"`
+	TimeEstimateHours *float64 `json:"time_estimate_hours"`
+	TimeSpent    *int64 `json:"-"`
+	TimeSpentHours *float64 `json:"time_spent_hours"`
 
 	UserID   int64  `json:"user_id,omitempty"`
 	Username string `json:"username,omitempty"`
@@ -119,11 +120,11 @@ type TaskResponse struct {
     Description string  `json:"description"`
 
     Status struct {
-        ID    string `json:"id"`
-        Name  string `json:"name"`
-        Type  string `json:"type"`
-        Color string `json:"color"`
-    } `json:"status"`
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Type  string `json:"type"`
+		Color string `json:"color"`
+	} `json:"status"`
 
     DateDone   *time.Time `json:"date_done,omitempty"`
     DateClosed *time.Time `json:"date_closed,omitempty"`
@@ -149,6 +150,15 @@ type TaskResponse struct {
 	AssigneeColor    *string `json:"assignee_color"`
     AssigneeUsername *string `json:"assignee_username"`
     AssigneeEmail    *string `json:"assignee_email"`
+	TimeEstimateHours *float64 `json:"time_estimate_hours,omitempty"`
+	TimeSpentHours    *float64 `json:"time_spent_hours,omitempty"`
+}
+
+type TaskStatus struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Color string `json:"color"`
 }
 
 type TaskSummary struct {

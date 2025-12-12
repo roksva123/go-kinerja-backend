@@ -262,6 +262,18 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                 if v, ok := st["color"].(string); ok { t.Status.Color = v }
             }
             log.Printf("Status: %+v\n", t.Status)
+            // Upsert status to its own table
+            if t.Status.ID != "" {
+				status := model.TaskStatus{
+					ID:    t.Status.ID,
+					Name:  t.Status.Name,
+					Type:  t.Status.Type,
+					Color: t.Status.Color,
+				}
+                if err := s.Repo.UpsertTaskStatus(ctx, &status); err != nil {
+                    log.Printf("WARNING: Failed to upsert task status %s: %v\n", t.Status.ID, err)
+                }
+            }
 
 			// List (Project)
 			if list, ok := raw["list"].(map[string]interface{}); ok {
@@ -277,7 +289,11 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
             t.DateUpdated = msToTimePtr(parseInt64Ptr(raw["date_updated"]))
             t.StartDate = msToTimePtr(parseInt64Ptr(raw["start_date"]))
             t.DueDate = msToTimePtr(parseInt64Ptr(raw["due_date"]))
-            t.TimeSpentMs = parseInt64Ptr(raw["time_spent"]) 
+
+            if timeSpentMs := parseInt64Ptr(raw["time_spent"]); timeSpentMs != nil {
+                hours := float64(*timeSpentMs) / 3600000.0
+                t.TimeSpentHours = &hours
+            }
 
             if t.StartDate == nil {
                 t.StartDate = t.DateCreated
@@ -292,12 +308,12 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
                             }
 
             rawTimeEstimate := parseInt64Ptr(raw["time_estimate"])
+            defaultHours := 8.0
             if rawTimeEstimate != nil {
-                t.TimeEstimate = rawTimeEstimate // Store as milliseconds
+                hours := float64(*rawTimeEstimate) / 3600000.0
+                t.TimeEstimateHours = &hours
             } else {
-				// Jika tidak ada estimasi, set default 8 jam (dalam milidetik)
-				defaultMilliseconds := int64(8 * 3600000)
-				t.TimeEstimate = &defaultMilliseconds
+				t.TimeEstimateHours = &defaultHours
 			}
 
             if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
@@ -377,9 +393,7 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 func ptrString(s string) *string {
     return &s
 }
-// func ptrInt64(v int64) *int64 {
-//     return &v
-// }
+
 
 func (s *ClickUpService) FullSync(ctx context.Context) ([]model.FullSync, error) {
 
@@ -847,8 +861,8 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			t.start_date,
 			t.due_date,
 			t.date_done,
-			t.time_spent_ms,
-			t.time_estimate,
+			t.time_spent_hours,
+			t.time_estimate_hours,
 			COALESCE(l.name, f.name) as project_name
 		FROM tasks t
 		LEFT JOIN lists l ON t.list_id = l.id
@@ -872,7 +886,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	for rows.Next() {
 		var taskID, taskName, statusName, description, textContent string
 		var startDate, dueDate, dateDone sql.NullTime
-		var timeSpentMs, timeEstimate sql.NullInt64
+		var timeSpentHours, timeEstimateHours sql.NullFloat64
 		var projectName sql.NullString
 
 		err := rows.Scan(
@@ -884,8 +898,8 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			&startDate,
 			&dueDate,
 			&dateDone,
-			&timeSpentMs,
-			&timeEstimate,
+			&timeSpentHours,
+			&timeEstimateHours,
 			&projectName,
 		)
 		if err != nil {
@@ -908,17 +922,9 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			taskDetail.ProjectName = &projectName.String
 		}
 
-		if timeSpentMs.Valid {
-			taskDetail.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
-		}
+		if timeSpentHours.Valid { taskDetail.TimeSpentHours = timeSpentHours.Float64 }
+		if timeEstimateHours.Valid { taskDetail.TimeEstimateHours = timeEstimateHours.Float64 }
 
-		if timeEstimate.Valid {
-			taskDetail.TimeEstimateHours = float64(timeEstimate.Int64) / 3600000.0
-		}
-
-		if timeSpentMs.Valid {
-			taskDetail.TimeSpentHours = float64(timeSpentMs.Int64) / 3600000.0
-		}
 
 		if _, exists := taskMap[taskID]; !exists {
 			taskMap[taskID] = &taskDetail

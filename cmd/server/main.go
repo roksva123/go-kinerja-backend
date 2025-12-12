@@ -50,7 +50,7 @@ func main() {
 	workloadSvc := service.NewWorkloadService(repo, clickSvc)
 	clickupHandler := handlers.NewClickUpHandler(clickSvc)
 	workloadHandler := handlers.NewWorkloadHandler(workloadSvc, clickSvc)
-	syncHandler := handlers.NewSyncHandler(clickSvc)
+	syncHandler := handlers.NewSyncHandler(clickSvc, repo)
 	authHandler := handlers.NewAuthHandler(repo, cfg.JWTSecret)
 
 
@@ -74,7 +74,7 @@ func main() {
 		clickup.POST("/sync/team", clickupHandler.SyncTeam)
 		clickup.POST("/sync/members", clickupHandler.SyncMembers)
 		clickup.POST("/sync/tasks", clickupHandler.SyncTasks)
-		clickup.POST("/sync-all", clickupHandler.SyncAll)
+		clickup.POST("/sync/all", clickupHandler.SyncAll)
 
 		clickup.GET("/spaces", clickupHandler.GetSpaces)
 		clickup.GET("/members", clickupHandler.GetMembers)
@@ -89,6 +89,9 @@ func main() {
 		sync.POST("/spaces-folders-lists", syncHandler.SyncSpacesFoldersAndListsHandler)
 		sync.GET("/lists", syncHandler.GetListsHandler)
 		sync.GET("/folders", syncHandler.GetFoldersHandler)
+		sync.POST("/all", syncHandler.TriggerSyncAll) 
+		sync.GET("/history", syncHandler.GetSyncHistory) 
+		sync.GET("/all/stream", syncHandler.StreamSyncAll) // Endpoint baru untuk streaming
 	}
 
 	work := api.Group("/workload")

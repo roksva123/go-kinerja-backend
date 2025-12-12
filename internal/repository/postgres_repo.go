@@ -197,6 +197,14 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         created_at TIMESTAMPTZ DEFAULT now(),
         updated_at TIMESTAMPTZ DEFAULT now()
     );`,
+    `CREATE TABLE IF NOT EXISTS sync_history (
+        id SERIAL PRIMARY KEY,
+        sync_time TIMESTAMPTZ DEFAULT now(),
+        sync_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        duration_ms BIGINT,
+        details JSONB
+    );`,
     }
     for _, q := range queries {
         if _, err := r.DB.ExecContext(ctx, q); err != nil {
@@ -1511,4 +1519,60 @@ func (r *PostgresRepo) GetLists(ctx context.Context) ([]model.List, error) {
 	}
 
 	return lists, nil
+}
+
+func (r *PostgresRepo) CreateSyncHistory(ctx context.Context, syncType, status string, durationMs int64, details []byte) (int64, error) {
+	query := `
+		INSERT INTO sync_history (sync_type, status, duration_ms, details)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`
+
+	var detailsJSON sql.NullString
+	if details != nil {
+		detailsJSON.String = string(details)
+		detailsJSON.Valid = true
+	}
+
+	var historyID int64
+	err := r.DB.QueryRowContext(ctx, query, syncType, status, durationMs, detailsJSON).Scan(&historyID)
+
+	return historyID, err
+}
+
+func (r *PostgresRepo) GetSyncHistory(ctx context.Context, limit int) ([]model.SyncHistory, error) {
+	query := `
+		SELECT id, sync_time, sync_type, status, COALESCE(duration_ms, 0), details
+		FROM sync_history
+		ORDER BY sync_time DESC
+		LIMIT $1
+	`
+
+	if limit <= 0 {
+		limit = 50 
+	}
+
+	rows, err := r.DB.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying sync history failed: %w", err)
+	}
+	defer rows.Close()
+
+	var history []model.SyncHistory
+	for rows.Next() {
+		var h model.SyncHistory
+		var details []byte 
+
+		if err := rows.Scan(&h.ID, &h.SyncTime, &h.SyncType, &h.Status, &h.DurationMs, &details); err != nil {
+			return nil, fmt.Errorf("scanning sync history row failed: %w", err)
+		}
+
+		if details != nil {
+			h.Details = details
+		}
+
+		history = append(history, h)
+	}
+
+	return history, nil
 }

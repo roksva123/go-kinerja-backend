@@ -978,63 +978,47 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	return result, nil
 }
 
-// func nullTimeToDateString(nt sql.NullTime) *string {
-// 	if !nt.Valid {
-// 		return nil
-// 	}
-// 	s := nt.Time.Format("02-01-2006")
-// 	return &s
-// }
-
-// func toInt64Ptr(ni sql.NullInt64) *int64 {
-// 	if !ni.Valid {
-// 		return nil
-// 	}
-// 	return &ni.Int64
-// }
 
 func (s *ClickUpService) AllSync(ctx context.Context) error {
-	log.Println("--- STARTING ALL SYNC ---")
-    if err := s.SyncTeam(ctx); err != nil {
-		return fmt.Errorf("error syncing team: %w", err)
+	// Call the progress-based function with a nil channel, as we don't need to track progress here.
+	return s.AllSyncWithProgress(ctx, nil)
+}
+
+
+func (s *ClickUpService) AllSyncWithProgress(ctx context.Context, progressChan chan<- string) error {
+	// Helper function to safely send progress messages
+	sendProgress := func(msg string) {
+		log.Println(msg) // Also log to console
+		if progressChan != nil {
+			progressChan <- msg
+		}
 	}
-	log.Println("✅ Spaces (from Team) synced successfully.")
+
+	sendProgress("--- Starting Full Sync ---")
+
+	sendProgress("Syncing spaces, folders, and lists...")
 	if err := s.SyncSpacesAndFolders(ctx); err != nil {
 		return fmt.Errorf("error syncing spaces and folders: %w", err)
 	}
-	log.Println("✅ Spaces and Folders synced successfully.")
-    if err := s.SyncMembers(ctx); err != nil {
+	sendProgress("✔ Spaces, folders, and lists synced.")
+
+	sendProgress("Syncing members...")
+	if err := s.SyncMembers(ctx); err != nil {
 		return fmt.Errorf("error syncing members: %w", err)
 	}
-	log.Println("✅ Members synced successfully.")
+	sendProgress("✔ Members synced.")
+
+	sendProgress("Syncing tasks...")
 	if _, err := s.SyncTasks(ctx); err != nil {
 		return fmt.Errorf("error syncing tasks: %w", err)
 	}
-	log.Println("✅ Tasks synced successfully.")
-	log.Println("--- ALL SYNC COMPLETED ---")
-    return nil
+	sendProgress("✔ Tasks synced.")
+
+	sendProgress("--- Full Sync Completed Successfully ---")
+	return nil
 }
 
-// func normalizeStatus(status string) string {
-// 	lowerStatus := strings.ToLower(status)
-// 	if strings.Contains(lowerStatus, "review") || strings.Contains(lowerStatus, "progress") {
-// 		return "progres"
-// 	}
-// 	if strings.Contains(lowerStatus, "do") {
-// 		return "to do"
-// 	}
-// 	if strings.Contains(lowerStatus, "done") || strings.Contains(lowerStatus, "complete") || strings.Contains(lowerStatus, "closed") {
-// 		return "done"
-// 	}
-// 	if strings.Contains(lowerStatus, "cancel") {
-// 		return "canceled"
-// 	}
-// 	return lowerStatus 
-// }
 
-// func (s *ClickUpService) GetWorkload(ctx context.Context, startMs, endMs int64) ([]model.WorkloadUser, error) {
-// 	return s.Repo.GetWorkload(ctx, time.UnixMilli(startMs), time.UnixMilli(endMs))
-// }
 
 func WorkingDaysBetween(start, end time.Time) int {
 	if end.Before(start) {

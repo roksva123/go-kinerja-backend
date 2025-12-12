@@ -1,17 +1,20 @@
 package handlers
 
 type TaskInResponse struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Description       string   `json:"description,omitempty"`
-	TextContent       string   `json:"text_content,omitempty"`
-	ProjectName       *string  `json:"project_name,omitempty"`
-	StatusName        string   `json:"status_name"`
-	StartDate         *string  `json:"start_date"`
-	DueDate           *string  `json:"due_date"`
-	DateDone          *string  `json:"date_done,omitempty"`
-	TimeEstimateHours float64  `json:"time_estimate_hours"`
-	TimeSpentHours    float64  `json:"time_spent_hours"`
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Description       string  `json:"description"`
+	StatusID          string  `json:"status_id"`
+	StatusName        string  `json:"status_name"`
+	StatusType        string  `json:"status_type"`
+	DateDone          *string `json:"date_done,omitempty"`
+	ProjectName       *string `json:"project_name,omitempty"`
+	DateClosed        *string `json:"date_closed,omitempty"`
+	StartDate         *string `json:"start_date,omitempty"`
+	DueDate           *string `json:"due_date,omitempty"`
+	TimeEstimateHours float64 `json:"time_estimate_hours"`
+	TimeSpentHours    float64 `json:"time_spent_hours"`
+	Category          string  `json:"category"`
 }
 
 type AssigneeWithTasks struct {

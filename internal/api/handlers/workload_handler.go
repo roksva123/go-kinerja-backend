@@ -89,6 +89,35 @@ func (h *WorkloadHandler) SyncAll(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "workload synced"})
 }
 
+const responseDateFormat = "02-01-2006"
+
+// TaskInResponse adalah struct yang digunakan untuk membentuk JSON respons
+// dengan format tanggal yang sudah disesuaikan.
+
+
+// AssigneeWithTasksResponse adalah struct untuk assignee dengan tugas yang sudah diformat.
+type AssigneeWithTasksResponse struct {
+	ClickUpID          int64            `json:"clickup_id"`
+	Username           string           `json:"username"`
+	Email              string           `json:"email"`
+	Name               string           `json:"name"`
+	TotalSpentHours    float64          `json:"total_spent_hours"`
+	ExpectedHours      float64          `json:"expected_hours"`
+	TotalTasks         int              `json:"total_tasks"`
+	ActualWorkHours    float64          `json:"actual_work_hours"`
+	TotalUpcomingHours float64          `json:"total_upcoming_hours"`
+	Tasks              []TaskInResponse `json:"tasks"`
+}
+
+// formatTimePtr mengubah *time.Time menjadi *string dengan format yang ditentukan.
+func formatTimePtr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	formatted := t.Format(responseDateFormat)
+	return &formatted
+}
+
 func (h *WorkloadHandler) AllSync(c *gin.Context) {
 	h.SyncAll(c)
 }
@@ -111,10 +140,54 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 
 	sortOrder := c.DefaultQuery("sort", "desc")
 
-	response, err := h.workloadSvc.GetTasksByRangeGrouped(c.Request.Context(), startDate, endDate, sortOrder)
+	// 1. Ambil data asli dari service
+	originalResponse, err := h.workloadSvc.GetTasksByRangeGrouped(c.Request.Context(), startDate, endDate, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 2. Transformasi data ke format respons yang diinginkan
+	responseAssignees := make([]AssigneeWithTasksResponse, len(originalResponse.Assignees))
+	for i, originalAssignee := range originalResponse.Assignees {
+		formattedTasks := make([]TaskInResponse, len(originalAssignee.Tasks))
+		for j, originalTask := range originalAssignee.Tasks {
+			formattedTasks[j] = TaskInResponse{
+				ID:                originalTask.ID,
+				Name:              originalTask.Name,
+				Description:       originalTask.Description,
+				StatusID:          originalTask.StatusID,
+				StatusName:        originalTask.StatusName,
+				StatusType:        originalTask.StatusType,
+				ProjectName:       originalTask.ProjectName,
+				TimeEstimateHours: originalTask.TimeEstimateHours,
+				TimeSpentHours:    originalTask.TimeSpentHours,
+				Category:          originalTask.Category,
+				StartDate:         formatTimePtr(originalTask.StartDate),
+				DueDate:           formatTimePtr(originalTask.DueDate),
+				DateDone:          formatTimePtr(originalTask.DateDone),
+				DateClosed:        formatTimePtr(originalTask.DateClosed),
+			}
+		}
+
+		// Salin field dari originalAssignee ke responseAssignees[i] secara manual
+		responseAssignees[i] = AssigneeWithTasksResponse{
+			ClickUpID:          originalAssignee.ClickUpID,
+			Username:           originalAssignee.Username,
+			Email:              originalAssignee.Email,
+			Name:               originalAssignee.Name,
+			TotalSpentHours:    originalAssignee.TotalSpentHours,
+			ExpectedHours:      originalAssignee.ExpectedHours,
+			TotalTasks:         originalAssignee.TotalTasks,
+			ActualWorkHours:    originalAssignee.ActualWorkHours,
+			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
+			Tasks:              formattedTasks, // Gunakan tasks yang sudah diformat
+		}
+	}
+
+	response := gin.H{
+		"count":     originalResponse.Count,
+		"assignees": responseAssignees,
 	}
 
 	c.JSON(http.StatusOK, response)

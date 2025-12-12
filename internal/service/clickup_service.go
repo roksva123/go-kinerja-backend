@@ -293,6 +293,17 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
             if timeSpentMs := parseInt64Ptr(raw["time_spent"]); timeSpentMs != nil {
                 hours := float64(*timeSpentMs) / 3600000.0
                 t.TimeSpentHours = &hours
+            } else {
+
+                if t.Status.Type == "done" || t.Status.Type == "closed" || strings.Contains(strings.ToLower(t.Status.Name), "done") || strings.Contains(strings.ToLower(t.Status.Name), "completed") {
+                    if t.StartDate != nil && t.DateDone != nil && t.DateDone.After(*t.StartDate) {
+                        // Calculate working days between start and done date, then multiply by 8 hours.
+                        workingDays := WorkingDaysBetween(*t.StartDate, *t.DateDone)
+                        hours := float64(workingDays * 8)
+                        t.TimeSpentHours = &hours
+                        log.Printf("Calculated TimeSpentHours for task %s: %f hours (%d working days from %v to %v)", t.ID, hours, workingDays, *t.StartDate, *t.DateDone)
+                    }
+                }
             }
 
             if t.StartDate == nil {
@@ -1041,4 +1052,53 @@ func WorkingDaysBetween(start, end time.Time) int {
 		}
 	}
 	return days
+}
+
+func (s *ClickUpService) GetTasksByAssignee(ctx context.Context, startMs, endMs int64) (*model.TasksByAssigneeResponse, error) {
+	start := time.UnixMilli(startMs)
+	end := time.UnixMilli(endMs)
+
+	summaries, err := s.Repo.GetTasksSummaryByDateRange(ctx, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get task summaries: %w", err)
+	}
+
+	if len(summaries) == 0 {
+		return &model.TasksByAssigneeResponse{
+			Count:     0,
+			Assignees: []model.AssigneeWithTasks{},
+		}, nil
+	}
+
+	var assignees []model.AssigneeWithTasks
+	for _, summary := range summaries {
+		tasks, err := s.Repo.GetTasksByUser(ctx, summary.UserID, start, end)
+		if err != nil {
+			log.Printf("WARNING: could not get tasks for user %d: %v", summary.UserID, err)
+			
+		}
+
+		totalSpentHours := summary.ActualWorkHours
+
+		assignee := model.AssigneeWithTasks{
+			ClickUpID:          summary.UserID,
+			Username:           summary.Name,
+			Email:              summary.Email,
+			Name:               summary.Name,
+			TotalSpentHours:    totalSpentHours,
+			ExpectedHours:      summary.TotalWorkHours,
+			TotalTasks:         summary.TotalTasks,
+			ActualWorkHours:    summary.ActualWorkHours,
+			TotalUpcomingHours: summary.TotalUpcomingHours,
+			Tasks:              tasks,
+		}
+		assignees = append(assignees, assignee)
+	}
+
+	response := &model.TasksByAssigneeResponse{
+		Count:     len(assignees),
+		Assignees: assignees,
+	}
+
+	return response, nil
 }

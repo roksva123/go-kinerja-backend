@@ -7,7 +7,9 @@ import (
 
 	"github.com/roksva123/go-kinerja-backend/internal/model"
 	"github.com/roksva123/go-kinerja-backend/internal/repository"
+
 	// "github.com/roksva123/go-kinerja-backend/internal/service"
+	"fmt"
 )
 
 type WorkloadService struct {
@@ -65,67 +67,8 @@ func (s *WorkloadService) GetWorkload(ctx context.Context, start, end time.Time,
 	return filteredWorkloads, nil
 }
 
-func (s *WorkloadService) GetTasksByRangeGroupedByAssignee(ctx context.Context, start, end time.Time, sortOrder string) (map[int64]model.AssigneeDetail, map[int64][]model.TaskDetail, error) {
-	startMs := start.UnixMilli()
-	endMs := end.UnixMilli()
-
-	tasks, err := s.repo.GetTasksFull(ctx, &startMs, &endMs, "", "", "")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	assigneesMap := make(map[int64]model.AssigneeDetail)
-	tasksByAssignee := make(map[int64][]model.TaskDetail)
-
-	for _, task := range tasks {
-		var userID int64
-
-		if task.UserID == nil {
-			userID = 0 
-			if _, ok := assigneesMap[userID]; !ok {
-				assigneesMap[userID] = model.AssigneeDetail{
-					ClickUpID: userID,
-					Username:  "Unassigned",
-					Name:      "Unassigned",
-				}
-			}
-		} else {
-			userID = *task.UserID
-		}
-
-		if _, ok := assigneesMap[userID]; !ok {
-			var username, email, name string
-			if task.Username != nil {
-				username = *task.Username
-				name = *task.Username 
-			}
-			if task.Email != nil {
-				email = *task.Email
-			}
-
-			assigneesMap[userID] = model.AssigneeDetail{
-				ClickUpID: userID,
-				Username:  username,
-				Email:     email,
-				Name:      name,
-			}
-		}
-
-		tasksByAssignee[userID] = append(tasksByAssignee[userID], model.TaskDetail{
-			ID:   task.TaskID,
-			Name: task.TaskName,
-			Description: task.Description,
-			StatusName: task.StatusName,
-			ProjectName: task.ProjectName,
-			StartDate: nullTimeToDateStringPointer(task.StartDate),
-			DueDate: nullTimeToDateStringPointer(task.DueDate),
-			DateDone: nullTimeToDateStringPointer(task.DateDone),
-			TimeEstimateHours: task.TimeEstimateHours,
-			TimeSpentHours: task.TimeSpentHours,
-		})
-	}
-
-	return assigneesMap, tasksByAssignee, nil
+func (s *WorkloadService) GetTasksByRangeGrouped(ctx context.Context, start, end time.Time, sortOrder string) (*model.TasksByAssigneeResponse, error) {
+	return s.GetTasksByAssignee(ctx, start, end)
 }
 
 func nullTimeToDateStringPointer(t *time.Time) *string {
@@ -134,4 +77,49 @@ func nullTimeToDateStringPointer(t *time.Time) *string {
 	}
 	s := t.Format("02-01-2006")
 	return &s
+}
+
+func (s *WorkloadService) GetTasksByAssignee(ctx context.Context, start, end time.Time) (*model.TasksByAssigneeResponse, error) {
+	summaries, err := s.repo.GetTasksSummaryByDateRange(ctx, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get task summaries: %w", err)
+	}
+
+	if len(summaries) == 0 {
+		return &model.TasksByAssigneeResponse{
+			Count:     0,
+			Assignees: []model.AssigneeWithTasks{},
+		}, nil
+	}
+
+	var assignees []model.AssigneeWithTasks
+	for _, summary := range summaries {
+		tasks, err := s.repo.GetTasksByUser(ctx, summary.UserID, start, end)
+		if err != nil {
+			fmt.Printf("WARNING: could not get tasks for user %d: %v\n", summary.UserID, err)
+		}
+
+		totalSpentHours := summary.ActualWorkHours
+
+		assignee := model.AssigneeWithTasks{
+			ClickUpID:          summary.UserID,
+			Username:           summary.Name,
+			Email:              summary.Email,
+			Name:               summary.Name,
+			TotalSpentHours:    totalSpentHours,
+			ExpectedHours:      summary.TotalWorkHours,
+			TotalTasks:         summary.TotalTasks,
+			ActualWorkHours:    summary.ActualWorkHours,
+			TotalUpcomingHours: summary.TotalUpcomingHours,
+			Tasks:              tasks,
+		}
+		assignees = append(assignees, assignee)
+	}
+
+	response := &model.TasksByAssigneeResponse{
+		Count:     len(assignees),
+		Assignees: assignees,
+	}
+
+	return response, nil
 }

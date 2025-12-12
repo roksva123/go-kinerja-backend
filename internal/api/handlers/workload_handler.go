@@ -111,52 +111,11 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 
 	sortOrder := c.DefaultQuery("sort", "desc")
 
-	workingDays := service.WorkingDaysBetween(startDate, endDate)
-	expectedHours := float64(workingDays * 8)
-
-	assigneesMap, tasksByAssignee, err := h.workloadSvc.GetTasksByRangeGroupedByAssignee(c.Request.Context(), startDate, endDate, sortOrder)
+	response, err := h.workloadSvc.GetTasksByRangeGrouped(c.Request.Context(), startDate, endDate, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	var responseAssignees []AssigneeWithTasks
-	for id, assignee := range assigneesMap {
-		tasksForAssignee := tasksByAssignee[id]
-		totalSpentHours := 0.0
-		var tasksInResponse []TaskInResponse
-
-		for _, task := range tasksForAssignee {
-			totalSpentHours += task.TimeSpentHours
-			tasksInResponse = append(tasksInResponse, TaskInResponse{
-				ID:                task.ID,
-				Name:              task.Name,
-				Description:       task.Description,
-				ProjectName:       task.ProjectName,
-				StatusName:        task.StatusName,
-				StartDate:         task.StartDate,
-				DueDate:           task.DueDate,
-				DateDone:          task.DateDone,
-				TimeEstimateHours: task.TimeEstimateHours,
-				TimeSpentHours:    task.TimeSpentHours,
-			})
-		}
-
-		responseAssignees = append(responseAssignees, AssigneeWithTasks{
-			ClickupID:       int(assignee.ClickUpID),
-			Username:        assignee.Username,
-			Email:           assignee.Email,
-			Name:            assignee.Name,
-			Tasks:           tasksInResponse,
-			TotalSpentHours: totalSpentHours,
-			ExpectedHours:   expectedHours,
-		})
-	}
-
-	finalResponse := TasksByAssigneeResponse{
-		Count:     len(responseAssignees),
-		Assignees: responseAssignees,
-	}
-
-	c.JSON(http.StatusOK, finalResponse)
+	c.JSON(http.StatusOK, response)
 }

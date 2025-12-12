@@ -408,8 +408,9 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
         INSERT INTO tasks (
             id, name, text_content, description,
             status_id, date_done, date_closed, start_date, due_date, 
-            time_estimate_hours, time_spent_hours, list_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, 0), COALESCE($11, 0), $12)
+            time_estimate_hours, time_spent_hours, list_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (id)
         DO UPDATE SET
             name = EXCLUDED.name,
@@ -420,8 +421,8 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
             date_closed = EXCLUDED.date_closed,
             start_date = EXCLUDED.start_date,
             due_date = EXCLUDED.due_date,
-            time_estimate_hours = COALESCE(EXCLUDED.time_estimate_hours, 0),
-            time_spent_hours = COALESCE(EXCLUDED.time_spent_hours, 0),
+            time_estimate_hours = EXCLUDED.time_estimate_hours,
+            time_spent_hours = EXCLUDED.time_spent_hours,
             list_id = EXCLUDED.list_id,
             updated_at = now()
     `
@@ -476,7 +477,6 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
         SELECT 
             COALESCE(task_id, id) AS id,
             name,
-            text_content,
             description,
             ts.id as status_id,
             ts.name as status_name,
@@ -513,7 +513,6 @@ func (r *PostgresRepo) GetTasks(ctx context.Context) ([]model.TaskResponse, erro
         if err := rows.Scan(
             &t.ID,
             &t.Name,
-            &t.TextContent,
             &t.Description,
             &statusID,
             &statusName,
@@ -791,7 +790,6 @@ func (r *PostgresRepo) GetTasksByRange(
         SELECT
             t.id,
             t.name,
-            t.text_content, 
             t.description,
             ts.id as status_id,
             ts.name AS status_name,
@@ -880,7 +878,7 @@ func (r *PostgresRepo) GetTasksByRange(
         var (
             tf model.TaskFull
 
-            textContent sql.NullString 
+            description sql.NullString
             statusID    sql.NullString 
             projectName                               sql.NullString
             startDate, dueDate, dateDone, dateClosed  sql.NullTime
@@ -892,8 +890,7 @@ func (r *PostgresRepo) GetTasksByRange(
         err := rows.Scan(
             &tf.TaskID,
             &tf.TaskName,
-            &textContent,   
-            &tf.Description,
+            &description,
             &statusID,      
             &tf.StatusName,
             &tf.StatusType,
@@ -917,6 +914,10 @@ func (r *PostgresRepo) GetTasksByRange(
             return nil, err
         }
         
+        if description.Valid {
+            tf.Description = description.String
+        }
+
         if projectName.Valid {
             tf.ProjectName = &projectName.String
         }
@@ -1122,7 +1123,6 @@ func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate 
             id,
             task_id,
             name,
-            text_content,
             description,
             t.status_id,
             ts.name as status_name,
@@ -1163,7 +1163,6 @@ func (r *PostgresRepo) GetTasksFiltered(ctx context.Context, startDate, endDate 
         &t.ID,
         &t.TaskID,
         &t.Name,
-        &t.TextContent,
         &t.Description,
         &t.Status.ID,
         &t.Status.Name,
@@ -1265,8 +1264,7 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
         SELECT 
             t.id,
             t.name,
-            t.description,
-            t.text_content,
+            t.description, 
             ts.id as status_id,
             ts.name as status_name,
             ts.type as status_type,
@@ -1276,13 +1274,19 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
             t.due_date,
             t.time_estimate_hours,
             t.time_spent_hours,
-            '' AS category -- Placeholder for category
+            COALESCE(f.name, l.name) AS project_name,
+            '' AS category
         FROM tasks t
         INNER JOIN task_assignees ta ON t.id = ta.task_id
         LEFT JOIN task_statuses ts ON t.status_id = ts.id
+        LEFT JOIN lists l ON t.list_id = l.id
+        LEFT JOIN folders f ON l.folder_id = f.id
         WHERE ta.user_clickup_id = $1
-          AND (t.date_done BETWEEN $2 AND $3 OR t.date_closed BETWEEN $2 AND $3)
-        ORDER BY t.date_closed DESC, t.name ASC
+          AND (
+            (t.start_date IS NOT NULL AND t.due_date IS NOT NULL AND t.start_date <= $3 AND t.due_date >= $2) OR
+            (t.date_done IS NOT NULL AND t.date_done BETWEEN $2 AND $3)
+        )
+        ORDER BY t.start_date DESC, t.name ASC
     `
 
     rows, err := r.DB.QueryContext(ctx, query, userID, start, end)
@@ -1297,12 +1301,13 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
         var timeEstimate, timeSpent sql.NullFloat64
         var startDate, dueDate, dateDone, dateClosed sql.NullTime
         var category sql.NullString
+        var description sql.NullString
+        var projectName sql.NullString
 
         if err := rows.Scan(
             &t.ID,
             &t.Name,
-            &t.Description,
-            &t.TextContent,
+            &description,
             &t.StatusID,
             &t.StatusName,
             &t.StatusType,
@@ -1312,17 +1317,22 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
             &dueDate,
             &timeEstimate,
             &timeSpent,
+            &projectName,
             &category,
         ); err != nil {
             return nil, err
         }
 
+        if description.Valid { t.Description = description.String }
         if dateDone.Valid { t.DateDone = &dateDone.Time }
         if dateClosed.Valid { t.DateClosed = &dateClosed.Time }
         if startDate.Valid { t.StartDate = &startDate.Time }
         if dueDate.Valid { t.DueDate = &dueDate.Time }
         if timeEstimate.Valid { t.TimeEstimateHours = timeEstimate.Float64 }
         if timeSpent.Valid { t.TimeSpentHours = timeSpent.Float64 }
+        if projectName.Valid {
+            t.ProjectName = &projectName.String
+        }
 
         tasks = append(tasks, t)
     }
@@ -1400,9 +1410,13 @@ func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, en
 			u.clickup_id,
 			u.name,
 			u.email,
-			COUNT(t.id) AS total_tasks,
-			COALESCE(SUM(t.time_spent_hours), 0) AS total_time_spent_hours,
-			COALESCE(SUM(CASE WHEN ts.type = 'open' THEN t.time_estimate_hours ELSE 0 END), 0) AS total_upcoming_estimate_hours
+			COUNT(t.id) FILTER (WHERE t.id IS NOT NULL) AS total_tasks,
+			COALESCE(SUM(t.time_spent_hours) FILTER (
+				WHERE ts.type IN ('closed', 'done', 'complete') OR LOWER(ts.name) LIKE '%done%' OR LOWER(ts.name) LIKE '%completed%'
+			), 0) AS actual_work_hours,
+			COALESCE(SUM(t.time_estimate_hours) FILTER (
+				WHERE ts.type = 'open' OR LOWER(ts.name) LIKE '%to do%'
+			), 0) AS total_upcoming_hours
 		FROM users u
 		LEFT JOIN task_assignees ta ON u.clickup_id = ta.user_clickup_id
 		LEFT JOIN tasks t ON ta.task_id = t.id AND (

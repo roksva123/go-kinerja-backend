@@ -29,7 +29,6 @@ type AssigneeWithTasks struct {
 	TotalSpentHours            float64          `json:"total_spent_hours"`
 	ExpectedHours              float64          `json:"expected_hours"`
 	TotalTasks                 int              `json:"total_tasks"`
-	TotalWorkHours             float64          `json:"total_work_hours"`
 	ActualWorkHours            float64          `json:"actual_work_hours"`
 	TotalUpcomingHours         float64          `json:"total_upcoming_hours"`
 	OnTimeCompletionPercentage *string          `json:"on_time_completion_percentage,omitempty"`

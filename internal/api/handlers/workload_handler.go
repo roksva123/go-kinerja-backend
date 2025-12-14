@@ -162,6 +162,23 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 	for i, originalAssignee := range originalResponse.Assignees {
 		formattedTasks := make([]TaskInResponse, len(originalAssignee.Tasks))
 		for j, originalTask := range originalAssignee.Tasks {
+			var timeEfficiency *float64
+			var remainingHours *float64
+
+			// --- START: Kalkulasi Metrik Baru ---
+			// 1. Hitung Remaining Time (Sisa Waktu)
+			if originalTask.DueDate != nil && originalTask.DateDone != nil {
+				sisaWaktu := originalTask.DueDate.Sub(*originalTask.DateDone).Hours()
+				remainingHours = &sisaWaktu
+			}
+
+			// 2. Hitung Time Efficiency Percentage (berdasarkan estimasi kerja)
+			if originalTask.TimeSpentHours > 0 && originalTask.TimeEstimateHours > 0 {
+				efisiensiWaktu := (originalTask.TimeEstimateHours / originalTask.TimeSpentHours) * 100
+				timeEfficiency = &efisiensiWaktu
+			}
+			// --- END: Kalkulasi Metrik Baru ---
+
 			formattedTasks[j] = TaskInResponse{
 				ID:                originalTask.ID,
 				Name:              originalTask.Name,
@@ -177,9 +194,8 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				DueDate:           formatTimePtr(originalTask.DueDate),
 				DateDone:          formatTimePtr(originalTask.DateDone),
 				DateClosed:        formatTimePtr(originalTask.DateClosed),
-				TimeEfficiencyPercentage: formatEfficiency(originalTask.TimeEfficiencyPercentage),
-				RemainingTimeHours:         originalTask.RemainingTimeHours,
-				RemainingTimeFormatted:     formatRemainingHours(originalTask.RemainingTimeHours),
+				TimeEfficiencyPercentage: formatEfficiency(timeEfficiency),
+				RemainingTimeFormatted:     formatRemainingHours(remainingHours),
 			}
 		}
 
@@ -202,13 +218,6 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		}
 		// --- END: Kalkulasi ---
 
-		// --- START: Kalkulasi Expected Hours (dari Time Estimate) ---
-		var totalExpectedHours float64
-		for _, task := range originalAssignee.Tasks {
-			totalExpectedHours += task.TimeEstimateHours
-		}
-		// --- END: Kalkulasi ---
-
 		// Salin field dari originalAssignee ke responseAssignees[i] secara manual
 		responseAssignees[i] = AssigneeWithTasks{
 			ClickupID:          originalAssignee.ClickUpID,
@@ -217,8 +226,8 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			Name:               originalAssignee.Name,
 			TotalSpentHours:    originalAssignee.TotalSpentHours,
 			ExpectedHours:      originalAssignee.ExpectedHours,
-			ActualWorkHours:    originalAssignee.TotalSpentHours,
 			TotalTasks:         originalAssignee.TotalTasks,
+			ActualWorkHours:    originalAssignee.TotalSpentHours, // Sesuai aturan baru: actual_work_hours = SUM(time_spent_hours)
 			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
 			OnTimeCompletionPercentage: onTimePercentage,
 			Tasks:              formattedTasks, 

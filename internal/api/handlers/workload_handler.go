@@ -202,6 +202,16 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		}
 		// --- END: Kalkulasi ---
 
+		// --- START: Kalkulasi Actual Work Hours ---
+		var totalActualWorkHours float64
+		for _, task := range originalAssignee.Tasks {
+			// Hitung hanya untuk tugas yang sudah selesai dan memiliki tanggal yang valid
+			if task.StartDate != nil && task.DateDone != nil {
+				totalActualWorkHours += task.DateDone.Sub(*task.StartDate).Hours()
+			}
+		}
+		// --- END: Kalkulasi ---
+
 		// Salin field dari originalAssignee ke responseAssignees[i] secara manual
 		responseAssignees[i] = AssigneeWithTasks{
 			ClickupID:          originalAssignee.ClickUpID,
@@ -209,12 +219,12 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			Email:              originalAssignee.Email,
 			Name:               originalAssignee.Name,
 			TotalSpentHours:    originalAssignee.TotalSpentHours,
-			ExpectedHours:      originalAssignee.ExpectedHours, // Perhatikan, field ini mungkin perlu disesuaikan jika nama berbeda
+			ExpectedHours:      originalAssignee.ExpectedHours, 
 			TotalTasks:         originalAssignee.TotalTasks,
-			ActualWorkHours:    originalAssignee.ActualWorkHours,
+			ActualWorkHours:    math.Round(totalActualWorkHours),
 			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
 			OnTimeCompletionPercentage: onTimePercentage,
-			Tasks:              formattedTasks, // Gunakan tasks yang sudah diformat
+			Tasks:              formattedTasks, 
 		}
 	}
 

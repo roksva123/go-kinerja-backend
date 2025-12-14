@@ -189,170 +189,205 @@ func msToTimePtr(ms *int64) *time.Time {
 	return &t
 }
 
-// SyncTasks
-func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
-    if s.TeamID == "" {
-        return 0, errors.New("team id not configured")
+func getTimePtr(v interface{}) *time.Time {
+    if v == nil {
+        return nil
     }
 
-    log.Println("=== START SYNC TASKS ===")
+    // Try parsing as milliseconds first
+    if ms := parseInt64Ptr(v); ms != nil {
+        return msToTimePtr(ms)
+    }
 
-    page := 0
-    total := 0
-
-    for {
-        url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/task?page=%d", s.TeamID, page)
-        log.Println("[REQUEST]", url)
-
-        b, err := s.doRequest(ctx, "GET", url)
-        if err != nil {
-            log.Println("❌ REQUEST ERROR:", err)
-            return total, err
+    if s, ok := v.(string); ok && s != "" {
+        // Try "DD-MM-YYYY" format (from your example JSON)
+        if t, err := time.Parse("02-01-2006", s); err == nil {
+            return &t
         }
-
-        var out struct {
-            Tasks []map[string]interface{} `json:"tasks"`
+        // Try "YYYY-MM-DD" format (common in databases/other APIs)
+        if t, err := time.Parse("2006-01-02", s); err == nil {
+            return &t
         }
+    }
+    return nil
+}
 
-        if err := json.Unmarshal(b, &out); err != nil {
-            log.Println("❌ JSON PARSE ERROR:", err)
-            return total, err
+// New helper to parse time values (milliseconds or hours) to *float64 (in hours)
+func parseTimeValueToHoursPtr(v interface{}) *float64 {
+    if v == nil {
+        return nil
+    }
+
+    // Try parsing as milliseconds (int64 or float64 representing int64)
+    if ms := parseInt64Ptr(v); ms != nil {
+        hours := float64(*ms) / 3600000.0 // Convert milliseconds to hours
+        return &hours
+    }
+
+    // If not milliseconds, try parsing as float64 directly (assuming it's already in hours)
+    if val, ok := v.(float64); ok {
+        return &val
+    }
+    if s, ok := v.(string); ok && s != "" {
+        if x, err := strconv.ParseFloat(s, 64); err == nil {
+            return &x
         }
+    }
+    return nil
+}
 
-        log.Printf("[PAGE %d] FOUND %d TASKS\n", page, len(out.Tasks))
+// SyncTasks
+func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
+	if s.TeamID == "" {
+		return 0, errors.New("team id not configured")
+	}
 
-        if len(out.Tasks) == 0 {
-            log.Println("=== NO MORE TASKS — FINISHED ===")
-            break
-        }
+	log.Println("=== START SYNC TASKS ===")
+	page := 0
+	total := 0
 
-        for _, raw := range out.Tasks {
+	for {
+		url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/task?page=%d&subtasks=true&include_closed=true", s.TeamID, page)
+		log.Println("[REQUEST]", url)
 
-            rawJSON, _ := json.Marshal(raw)
-            log.Printf("--- RAW TASK DATA FROM CLICKUP ---\n%s\n---------------------------------", string(rawJSON))
+		b, err := s.doRequest(ctx, "GET", url)
+		if err != nil {
+			log.Println("❌ REQUEST ERROR:", err)
+			return total, err
+		}
 
+		var out struct {
+			Tasks []map[string]interface{} `json:"tasks"`
+		}
+		if err := json.Unmarshal(b, &out); err != nil {
+			log.Println("❌ JSON PARSE ERROR:", err)
+			return total, err
+		}
 
-            t := &model.TaskResponse{}
-            log.Println("---- PROCESSING TASK ----")
+		log.Printf("[PAGE %d] FOUND %d TASKS\n", page, len(out.Tasks))
+		if len(out.Tasks) == 0 {
+			log.Println("=== NO MORE TASKS — FINISHED ===")
+			break
+		}
 
-            // ID
-            if id, ok := raw["id"].(string); ok {
-                t.ID = id
-            }
-            log.Println("ID:", t.ID)
+		for _, raw := range out.Tasks {
+			t := &model.TaskResponse{}
 
-            // Name
-            if name, ok := raw["name"].(string); ok {
-                t.Name = name
-            }
+			// STEP 1: PARSE ALL PRIMARY DATA
+			t.ID = safeString(raw["id"])
+			t.Name = safeString(raw["name"])
+			t.TextContent = safeString(raw["text_content"])
+			t.Description = safeString(raw["description"])
 
-            // Content
-            if txt, ok := raw["text_content"].(string); ok {
-                t.TextContent = txt
-            }
-            if desc, ok := raw["description"].(string); ok {
-                t.Description = desc
-            }
+			if st, ok := raw["status"].(map[string]interface{}); ok {
+				t.Status.ID = safeString(st["id"])
+				t.Status.Name = safeString(st["status"])
+				t.Status.Type = safeString(st["type"])
+				t.Status.Color = safeString(st["color"])
+			}
 
-            // Status
-            if st, ok := raw["status"].(map[string]interface{}); ok {
-                if v, ok := st["id"].(string); ok { t.Status.ID = v }
-                if v, ok := st["status"].(string); ok { t.Status.Name = v }
-                if v, ok := st["type"].(string); ok { t.Status.Type = v }
-                if v, ok := st["color"].(string); ok { t.Status.Color = v }
-            }
-            log.Printf("Status: %+v\n", t.Status)
-            // Upsert status to its own table
-            if t.Status.ID != "" {
-				status := model.TaskStatus{
-					ID:    t.Status.ID,
-					Name:  t.Status.Name,
-					Type:  t.Status.Type,
-					Color: t.Status.Color,
-				}
-                if err := s.Repo.UpsertTaskStatus(ctx, &status); err != nil {
-                    log.Printf("WARNING: Failed to upsert task status %s: %v\n", t.Status.ID, err)
-                }
-            }
-
-			// List (Project)
 			if list, ok := raw["list"].(map[string]interface{}); ok {
 				if id, ok := list["id"].(string); ok {
 					t.ListID = &id
 				}
 			}
 
-            // Dates
-            t.DateDone = msToTimePtr(parseInt64Ptr(raw["date_done"]))
-            t.DateClosed = msToTimePtr(parseInt64Ptr(raw["date_closed"]))
-            t.DateCreated = msToTimePtr(parseInt64Ptr(raw["date_created"]))
-            t.DateUpdated = msToTimePtr(parseInt64Ptr(raw["date_updated"]))
-            t.StartDate = msToTimePtr(parseInt64Ptr(raw["start_date"]))
-            t.DueDate = msToTimePtr(parseInt64Ptr(raw["due_date"]))
+			// Parse all dates from primary source
+			t.DateCreated = getTimePtr(raw["date_created"])
+			t.DateUpdated = getTimePtr(raw["date_updated"])
+			t.DateDone = getTimePtr(raw["date_done"])
+			t.DateClosed = getTimePtr(raw["date_closed"])
+			t.StartDate = getTimePtr(raw["start_date"])
+			t.DueDate = getTimePtr(raw["due_date"])
 
-            if timeSpentMs := parseInt64Ptr(raw["time_spent"]); timeSpentMs != nil {
-                hours := float64(*timeSpentMs) / 3600000.0
-                t.TimeSpentHours = &hours
-            } else {
+			// STEP 2: PARSE CUSTOM FIELDS (OVERWRITES DATES IF PRESENT)
+			if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
+				for _, rawCF := range cfArr {
+					cf := rawCF.(map[string]interface{})
+					name, _ := cf["name"].(string)
+					val := cf["value"]
+					if val == nil {
+						continue
+					}
+					if name == "Tanggal Mulai" {
+						if newStartDate := getTimePtr(val); newStartDate != nil {
+							t.StartDate = newStartDate
+						}
+					}
+					if name == "Tanggal Akhir" {
+						if newDueDate := getTimePtr(val); newDueDate != nil {
+							t.DueDate = newDueDate
+						}
+					}
+				}
+			}
 
-                if t.Status.Type == "done" || t.Status.Type == "closed" || strings.Contains(strings.ToLower(t.Status.Name), "done") || strings.Contains(strings.ToLower(t.Status.Name), "completed") {
-                    if t.StartDate != nil && t.DateDone != nil && t.DateDone.After(*t.StartDate) {
-                        // Calculate working days between start and done date, then multiply by 8 hours.
-                        workingDays := WorkingDaysBetween(*t.StartDate, *t.DateDone)
-                        hours := float64(workingDays * 8)
-                        t.TimeSpentHours = &hours
-                        log.Printf("Calculated TimeSpentHours for task %s: %f hours (%d working days from %v to %v)", t.ID, hours, workingDays, *t.StartDate, *t.DateDone)
-                    }
-                }
-            }
+			// STEP 3: CALCULATE EFFICIENCY METRICS (MUST BE DONE BEFORE FALLBACKS)
+			if t.StartDate != nil && t.DueDate != nil && t.DateDone != nil {
+				log.Printf("Calculating efficiency for Task ID %s with Start: %v, Due: %v, Done: %v", t.ID, *t.StartDate, *t.DueDate, *t.DateDone)
+				remainingDuration := t.DueDate.Sub(*t.DateDone)
+				remainingHours := remainingDuration.Hours()
+				t.RemainingTimeHours = &remainingHours
 
-            if t.StartDate == nil {
-                t.StartDate = t.DateCreated
-                log.Printf("StartDate is nil, using DateCreated (%v) instead.", t.DateCreated)
-            }
-            if t.DueDate == nil {
-                t.DueDate = t.StartDate 
-                if t.DateDone != nil {
-                    t.DueDate = t.DateDone
-                }
-                log.Printf("DueDate is nil, using a fallback date (%v).", t.DueDate)
-                            }
+				durasiAlokasi := t.DueDate.Sub(*t.StartDate)
+				durasiAktual := t.DateDone.Sub(*t.StartDate)
 
-            rawTimeEstimate := parseInt64Ptr(raw["time_estimate"])
-            defaultHours := 8.0
-            if rawTimeEstimate != nil {
-                hours := float64(*rawTimeEstimate) / 3600000.0
-                t.TimeEstimateHours = &hours
-            } else {
+				if durasiAktual.Hours() > 0 {
+					efficiency := (durasiAlokasi.Hours() / durasiAktual.Hours()) * 100
+					t.TimeEfficiencyPercentage = &efficiency
+				}
+			}
+
+			// STEP 4: APPLY FALLBACK LOGIC FOR MISSING VALUES
+			// Fallback for StartDate
+			if t.StartDate == nil {
+				t.StartDate = t.DateCreated
+			}
+			// Fallback for DueDate
+			if t.DueDate == nil {
+				if t.DateDone != nil {
+					t.DueDate = t.DateDone
+				} else {
+					t.DueDate = t.StartDate
+				}
+			}
+
+			// Fallback for TimeSpent
+			if timeSpentHours := parseTimeValueToHoursPtr(raw["time_spent"]); timeSpentHours != nil {
+				t.TimeSpentHours = timeSpentHours
+			} else if t.TimeSpentHours == nil { // Only calculate if not set
+				isDone := t.Status.Type == "done" || t.Status.Type == "closed"
+				if isDone && t.StartDate != nil && t.DateDone != nil && t.DateDone.After(*t.StartDate) {
+					workingDays := WorkingDaysBetween(*t.StartDate, *t.DateDone)
+					hours := float64(workingDays * 8)
+					t.TimeSpentHours = &hours
+				}
+			}
+			// Fallback for TimeEstimate
+			if timeEstimateHours := parseTimeValueToHoursPtr(raw["time_estimate"]); timeEstimateHours != nil {
+				t.TimeEstimateHours = timeEstimateHours
+			} else if t.TimeEstimateHours == nil { // Only set default if not set
+				defaultHours := 8.0
 				t.TimeEstimateHours = &defaultHours
 			}
 
-            if cfArr, ok := raw["custom_fields"].([]interface{}); ok {
-                for _, rawCF := range cfArr {
-                    cf := rawCF.(map[string]interface{})
+			// STEP 5: PROCESS AND SAVE TO DATABASE
+			// Upsert Status
+			if t.Status.ID != "" {
+				status := model.TaskStatus{
+					ID:    t.Status.ID,
+					Name:  t.Status.Name,
+					Type:  t.Status.Type,
+					Color: t.Status.Color,
+				}
+				if err := s.Repo.UpsertTaskStatus(ctx, &status); err != nil {
+					log.Printf("WARNING: Failed to upsert task status %s: %v\n", t.Status.ID, err)
+				}
+			}
 
-                    name, _ := cf["name"].(string)
-                    val := cf["value"]
-                    if val == nil { continue }
-
-                    // Tanggal Mulai
-                    if name == "Tanggal Mulai" {
-                        t.StartDate = msToTimePtr(anyToInt64Ptr(val))
-                    }
-
-                    // Tanggal Akhir
-                    if name == "Tanggal Akhir" {
-                        t.DueDate = msToTimePtr(anyToInt64Ptr(val))
-                    }
-                }
-            }
-
-			// Assignees
+			// Process Assignees
 			var assigneeIDs []int64
-			var assigneesArr []interface{}
-			var ok bool
-			if assigneesArr, ok = raw["assignees"].([]interface{}); ok {
-
+			if assigneesArr, ok := raw["assignees"].([]interface{}); ok {
 				for _, assigneeData := range assigneesArr {
 					if a, ok := assigneeData.(map[string]interface{}); ok {
 						if id, ok := a["id"].(float64); ok {
@@ -361,45 +396,25 @@ func (s *ClickUpService) SyncTasks(ctx context.Context) (int, error) {
 					}
 				}
 			}
-
-			if len(assigneeIDs) > 0 {
-				firstAssigneeID := assigneeIDs[0]
-				t.AssigneeUserID = &firstAssigneeID
+			// Upsert Task to DB
+			if err := s.Repo.UpsertTask(ctx, t); err != nil {
+				log.Println("❌ UPSERT ERROR:", err)
+				return total, err
 			}
-			if len(assigneesArr) > 0 {
-				if assigneeData, ok := assigneesArr[0].(map[string]interface{}); ok {
-					if id, ok := assigneeData["id"].(float64); ok {
-						userFromTask := &model.User{
-							ClickUpID: int64(id),
-							Name:      safeString(assigneeData["username"]),
-							Email:     safeString(assigneeData["email"]),
-						}
-						if err := s.Repo.UpsertUserFromTask(ctx, userFromTask); err != nil {
-							log.Printf("WARNING: Failed to upsert user from task %s: %v\n", t.ID, err)
-						}
-					}
-				}
-			}
-
-            if err := s.Repo.UpsertTask(ctx, t); err != nil {
-                log.Println("❌ UPSERT ERROR:", err)
-                return total, err
-            }
+			// Upsert Assignees relation
 			if err := s.Repo.UpsertTaskAssignees(ctx, t.ID, assigneeIDs); err != nil {
 				log.Printf("❌ FAILED TO UPSERT ASSIGNEES for task %s: %v\n", t.ID, err)
 				return total, err
 			}
-            log.Println("✔ UPSERT SUCCESS:", t.ID)
-            total++
-        }
+			log.Println("✔ UPSERT SUCCESS:", t.ID)
+			total++
+		}
+		page++
+	}
 
-        page++
-    }
-
-    log.Println("=== SYNC COMPLETE — TOTAL:", total)
-    return total, nil
+	log.Println("=== SYNC COMPLETE — TOTAL:", total)
+	return total, nil
 }
-
 
 func ptrString(s string) *string {
     return &s
@@ -897,6 +912,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 	for rows.Next() {
 		var taskID, taskName, statusName, description, textContent string
 		var startDate, dueDate, dateDone sql.NullTime
+
 		var timeSpentHours, timeEstimateHours sql.NullFloat64
 		var projectName sql.NullString
 
@@ -918,7 +934,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			return nil, err
 		}
 
-		taskDetail := model.TaskDetail{
+		taskDetail := model.TaskDetail{ // Variabel taskDetail dibuat di sini
 			ID:          taskID,
 			Name:        taskName,
 			Description: description,
@@ -929,6 +945,25 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			DateDone:    nullTimeToDateString(dateDone),
 			Assignees:   []model.AssigneeDetail{},
 		}
+
+		// --- START: Kalkulasi Efisiensi Waktu & Sisa Waktu ---
+		if startDate.Valid && dueDate.Valid && dateDone.Valid {
+			// 1. Hitung sisa waktu (due_date - date_done)
+			remainingDuration := dueDate.Time.Sub(dateDone.Time)
+			remainingHoursValue := remainingDuration.Hours()
+			taskDetail.RemainingTimeHours = &remainingHoursValue
+
+			// 2. Hitung persentase efisiensi
+			durasiAlokasi := dueDate.Time.Sub(startDate.Time)
+			durasiAktual := dateDone.Time.Sub(startDate.Time)
+
+			if durasiAktual.Hours() > 0 {
+				efficiency := (durasiAlokasi.Hours() / durasiAktual.Hours()) * 100
+				taskDetail.TimeEfficiencyPercentage = &efficiency
+			}
+		}
+		// --- END: Kalkulasi ---
+
 		if projectName.Valid {
 			taskDetail.ProjectName = &projectName.String
 		}
@@ -1059,7 +1094,7 @@ func (s *ClickUpService) GetTasksByAssignee(ctx context.Context, startMs, endMs 
 		tasks, err := s.Repo.GetTasksByUser(ctx, summary.UserID, start, end)
 		if err != nil {
 			log.Printf("WARNING: could not get tasks for user %d: %v", summary.UserID, err)
-			
+			continue 
 		}
 
 		totalSpentHours := summary.ActualWorkHours

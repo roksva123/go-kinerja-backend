@@ -20,27 +20,6 @@ type WorkloadUser struct {
 	ExpectedHours float64 `json:"expected_hours"`
 }
 
-type AssigneeDetail struct {
-	ClickUpID int64  `json:"clickup_id"`
-	Username  string `json:"username"`
-	Email     string `json:"email"`
-	Name      string `json:"name"`
-}
-
-type TaskDetail struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description,omitempty"`
-	TextContent     string   `json:"text_content,omitempty"`
-	ProjectName     *string  `json:"project_name,omitempty"`
-	StatusName      string   `json:"status_name"`
-	StartDate       *string  `json:"start_date"`
-	DueDate         *string  `json:"due_date"`
-	DateDone        *string  `json:"date_done,omitempty"`
-	TimeEstimateHours  float64  `json:"time_estimate_hours"`
-    TimeSpentHours  float64  `json:"time_spent_hours"`
-	Assignees       []AssigneeDetail `json:"assignees"`
-}
 
 type WorkloadSummary struct {
     TotalUsers int     `json:"total_users"`

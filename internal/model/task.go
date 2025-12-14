@@ -91,6 +91,8 @@ type TaskFull struct {
 	// Team
 	TeamID   *string `json:"team_id"`
 	TeamName *string `json:"team_name"`
+
+	TimeEfficiencyPercentage *float64 `json:"time_efficiency_percentage,omitempty"`
 }
 
 type TaskItem struct {
@@ -109,7 +111,9 @@ type TaskItem struct {
 	TimeEstimateHours float64   `json:"time_estimate_hours"` 
 	TimeSpentHours  float64   `json:"time_spent_hours"`    
 	Category        string    `json:"category"`
-	
+
+	TimeEfficiencyPercentage *float64 `json:"time_efficiency_percentage,omitempty"`
+	RemainingTimeHours         *float64 `json:"remaining_time_hours,omitempty"`
 }
 
 type TaskResponse struct {
@@ -152,6 +156,9 @@ type TaskResponse struct {
     AssigneeEmail    *string `json:"assignee_email"`
 	TimeEstimateHours *float64 `json:"time_estimate_hours,omitempty"`
 	TimeSpentHours    *float64 `json:"time_spent_hours,omitempty"`
+
+	TimeEfficiencyPercentage *float64 `json:"time_efficiency_percentage,omitempty"`
+	RemainingTimeHours         *float64 `json:"remaining_time_hours,omitempty"`
 }
 
 type TaskStatus struct {
@@ -209,4 +216,31 @@ type TasksByAssigneeResponse struct {
 
     Email     string  `json:"email"`
     Profile   *string `json:"profilePicture"`
+}
+
+type TaskDetail struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	TextContent string  `json:"text_content"`
+	StatusName  string  `json:"status_name"`
+	StartDate   *string `json:"start_date"`
+	DueDate     *string `json:"due_date"`
+	DateDone    *string `json:"date_done"`
+	ProjectName *string `json:"project_name,omitempty"`
+
+	TimeSpentHours    float64 `json:"time_spent_hours"`
+	TimeEstimateHours float64 `json:"time_estimate_hours"`
+
+	TimeEfficiencyPercentage *float64 `json:"time_efficiency_percentage,omitempty"`
+	RemainingTimeHours         *float64 `json:"remaining_time_hours,omitempty"`
+
+	Assignees []AssigneeDetail `json:"assignees"`
+}
+
+type AssigneeDetail struct {
+	ClickUpID int64  `json:"clickup_id"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
 }

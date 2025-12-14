@@ -170,6 +170,10 @@ func (r *PostgresRepo) RunMigrations(ctx context.Context) error {
         ALTER TABLE tasks ADD COLUMN IF NOT EXISTS time_estimate_hours FLOAT;
         ALTER TABLE tasks ADD COLUMN IF NOT EXISTS time_spent_hours FLOAT;
     END $$;`,
+    `DO $$ BEGIN
+        ALTER TABLE tasks ADD COLUMN IF NOT EXISTS remaining_time_hours FLOAT8;
+        ALTER TABLE tasks ADD COLUMN IF NOT EXISTS time_efficiency_percentage FLOAT8;
+    END $$;`,
     `CREATE INDEX IF NOT EXISTS idx_tasks_start_date ON tasks(start_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
      CREATE INDEX IF NOT EXISTS idx_tasks_status_id ON tasks(status_id);`,
@@ -415,10 +419,11 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
     query := `
         INSERT INTO tasks (
             id, name, text_content, description,
-            status_id, date_done, date_closed, start_date, due_date, 
-            time_estimate_hours, time_spent_hours, list_id
+            status_id, date_done, date_closed, start_date, due_date,
+            time_estimate_hours, time_spent_hours, list_id,
+            remaining_time_hours, time_efficiency_percentage
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id)
         DO UPDATE SET
             name = EXCLUDED.name,
@@ -432,6 +437,8 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
             time_estimate_hours = EXCLUDED.time_estimate_hours,
             time_spent_hours = EXCLUDED.time_spent_hours,
             list_id = EXCLUDED.list_id,
+            remaining_time_hours = EXCLUDED.remaining_time_hours,
+            time_efficiency_percentage = EXCLUDED.time_efficiency_percentage,
             updated_at = now()
     `
     _, err := r.DB.ExecContext(ctx, query,
@@ -447,6 +454,8 @@ func (r *PostgresRepo) UpsertTask(ctx context.Context, t *model.TaskResponse) er
         t.TimeEstimateHours,
         t.TimeSpentHours,
         t.ListID,
+        t.RemainingTimeHours,
+        t.TimeEfficiencyPercentage,
     )
 
     return err
@@ -959,6 +968,18 @@ func (r *PostgresRepo) GetTasksByRange(
         if timeEstimate.Valid { tf.TimeEstimateHours = timeEstimate.Float64 }
         if timeSpent.Valid { tf.TimeSpentHours = timeSpent.Float64 }
 
+        // --- START: Kalkulasi Efisiensi Waktu ---
+        if startDate.Valid && dueDate.Valid && dateDone.Valid {
+            durasiAlokasi := dueDate.Time.Sub(startDate.Time)
+            durasiAktual := dateDone.Time.Sub(startDate.Time)
+
+            if durasiAktual.Hours() > 0 {
+                efficiency := (durasiAlokasi.Hours() / durasiAktual.Hours()) * 100
+                tf.TimeEfficiencyPercentage = &efficiency
+            }
+        }
+        // --- END: Kalkulasi ---
+
         tasks = append(tasks, tf)
     }
 
@@ -1117,6 +1138,18 @@ func (r *PostgresRepo) GetTasksFull(
 
         if timeEstimate.Valid { tf.TimeEstimateHours = timeEstimate.Float64 }
         if timeSpent.Valid { tf.TimeSpentHours = timeSpent.Float64 }
+
+        // --- START: Kalkulasi Efisiensi Waktu ---
+        if startDate.Valid && dueDate.Valid && dateDone.Valid {
+            durasiAlokasi := dueDate.Time.Sub(startDate.Time)
+            durasiAktual := dateDone.Time.Sub(startDate.Time)
+
+            if durasiAktual.Hours() > 0 {
+                efficiency := (durasiAlokasi.Hours() / durasiAktual.Hours()) * 100
+                tf.TimeEfficiencyPercentage = &efficiency
+            }
+        }
+        // --- END: Kalkulasi ---
 
         out = append(out, tf)
     }
@@ -1281,6 +1314,8 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
             t.due_date,
             t.time_estimate_hours,
             t.time_spent_hours,
+            t.remaining_time_hours,
+            t.time_efficiency_percentage,
             COALESCE(f.name, l.name) AS project_name,
             '' AS category
         FROM tasks t
@@ -1305,7 +1340,7 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
     var tasks []model.TaskItem
     for rows.Next() {
         var t model.TaskItem
-        var timeEstimate, timeSpent sql.NullFloat64
+        var timeEstimate, timeSpent, remainingHours, efficiencyPercentage sql.NullFloat64
         var startDate, dueDate, dateDone, dateClosed sql.NullTime
         var category sql.NullString
         var description sql.NullString
@@ -1324,6 +1359,8 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
             &dueDate,
             &timeEstimate,
             &timeSpent,
+            &remainingHours,
+            &efficiencyPercentage,
             &projectName,
             &category,
         ); err != nil {
@@ -1337,6 +1374,8 @@ func (r *PostgresRepo) GetTasksByUser(ctx context.Context, userID int64, start, 
         if dueDate.Valid { t.DueDate = &dueDate.Time }
         if timeEstimate.Valid { t.TimeEstimateHours = timeEstimate.Float64 }
         if timeSpent.Valid { t.TimeSpentHours = timeSpent.Float64 }
+        if remainingHours.Valid { t.RemainingTimeHours = &remainingHours.Float64 }
+        if efficiencyPercentage.Valid { t.TimeEfficiencyPercentage = &efficiencyPercentage.Float64 }
         if projectName.Valid {
             t.ProjectName = &projectName.String
         }

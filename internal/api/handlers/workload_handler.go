@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -118,6 +120,32 @@ func formatTimePtr(t *time.Time) *string {
 	return &formatted
 }
 
+// formatEfficiency formats a float64 pointer into a percentage string.
+func formatEfficiency(val *float64) *string {
+	if val == nil {
+		return nil
+	}
+	s := fmt.Sprintf("%.2f%%", *val)
+	return &s
+}
+
+// formatRemainingHours formats hours into a "D hari, H jam" string.
+func formatRemainingHours(hours *float64) *string {
+	if hours == nil {
+		return nil
+	}
+	h := *hours
+	sign := ""
+	if h < 0 {
+		sign = "-"
+		h = -h
+	}
+	days := int(h / 24)
+	remainingHours := int(math.Mod(h, 24))
+	s := fmt.Sprintf("%s%d hari, %d jam", sign, days, remainingHours)
+	return &s
+}
+
 func (h *WorkloadHandler) AllSync(c *gin.Context) {
 	h.SyncAll(c)
 }
@@ -167,6 +195,9 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				DueDate:           formatTimePtr(originalTask.DueDate),
 				DateDone:          formatTimePtr(originalTask.DateDone),
 				DateClosed:        formatTimePtr(originalTask.DateClosed),
+				TimeEfficiencyPercentage: formatEfficiency(originalTask.TimeEfficiencyPercentage),
+				RemainingTimeHours:         originalTask.RemainingTimeHours,
+				RemainingTimeFormatted:     formatRemainingHours(originalTask.RemainingTimeHours),
 			}
 		}
 

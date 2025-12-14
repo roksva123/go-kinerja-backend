@@ -93,24 +93,6 @@ func (h *WorkloadHandler) SyncAll(c *gin.Context) {
 
 const responseDateFormat = "02-01-2006"
 
-// TaskInResponse adalah struct yang digunakan untuk membentuk JSON respons
-// dengan format tanggal yang sudah disesuaikan.
-
-
-// AssigneeWithTasksResponse adalah struct untuk assignee dengan tugas yang sudah diformat.
-type AssigneeWithTasksResponse struct {
-	ClickUpID          int64            `json:"clickup_id"`
-	Username           string           `json:"username"`
-	Email              string           `json:"email"`
-	Name               string           `json:"name"`
-	TotalSpentHours    float64          `json:"total_spent_hours"`
-	ExpectedHours      float64          `json:"expected_hours"`
-	TotalTasks         int              `json:"total_tasks"`
-	ActualWorkHours    float64          `json:"actual_work_hours"`
-	TotalUpcomingHours float64          `json:"total_upcoming_hours"`
-	Tasks              []TaskInResponse `json:"tasks"`
-}
-
 // formatTimePtr mengubah *time.Time menjadi *string dengan format yang ditentukan.
 func formatTimePtr(t *time.Time) *string {
 	if t == nil {
@@ -176,7 +158,7 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 	}
 
 	// 2. Transformasi data ke format respons yang diinginkan
-	responseAssignees := make([]AssigneeWithTasksResponse, len(originalResponse.Assignees))
+	responseAssignees := make([]AssigneeWithTasks, len(originalResponse.Assignees))
 	for i, originalAssignee := range originalResponse.Assignees {
 		formattedTasks := make([]TaskInResponse, len(originalAssignee.Tasks))
 		for j, originalTask := range originalAssignee.Tasks {
@@ -201,17 +183,37 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			}
 		}
 
+		// --- START: Kalkulasi Persentase Tepat Waktu ---
+		var onTimeCount int
+		var completedCount int
+		for _, task := range originalAssignee.Tasks {
+			if task.DateDone != nil {
+				completedCount++
+				if task.DueDate != nil && !task.DateDone.After(*task.DueDate) { // Cek jika donedate <= duedate
+					onTimeCount++
+				}
+			}
+		}
+
+		var onTimePercentage *string
+		if completedCount > 0 {
+			percentage := (float64(onTimeCount) / float64(completedCount)) * 100
+			onTimePercentage = formatEfficiency(&percentage) // Menggunakan kembali fungsi format yang ada
+		}
+		// --- END: Kalkulasi ---
+
 		// Salin field dari originalAssignee ke responseAssignees[i] secara manual
-		responseAssignees[i] = AssigneeWithTasksResponse{
-			ClickUpID:          originalAssignee.ClickUpID,
+		responseAssignees[i] = AssigneeWithTasks{
+			ClickupID:          originalAssignee.ClickUpID,
 			Username:           originalAssignee.Username,
 			Email:              originalAssignee.Email,
 			Name:               originalAssignee.Name,
 			TotalSpentHours:    originalAssignee.TotalSpentHours,
-			ExpectedHours:      originalAssignee.ExpectedHours,
+			ExpectedHours:      originalAssignee.ExpectedHours, // Perhatikan, field ini mungkin perlu disesuaikan jika nama berbeda
 			TotalTasks:         originalAssignee.TotalTasks,
 			ActualWorkHours:    originalAssignee.ActualWorkHours,
 			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
+			OnTimeCompletionPercentage: onTimePercentage,
 			Tasks:              formattedTasks, // Gunakan tasks yang sudah diformat
 		}
 	}

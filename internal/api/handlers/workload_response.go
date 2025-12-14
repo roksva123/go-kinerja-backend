@@ -22,17 +22,18 @@ type TaskInResponse struct {
 }
 
 type AssigneeWithTasks struct {
-	ClickupID          int              `json:"clickup_id"`
-	Username           string           `json:"username"`
-	Email              string           `json:"email"`
-	Name               string           `json:"name"`
-	TotalSpentHours    float64          `json:"total_spent_hours"`
-	ExpectedHours      float64          `json:"expected_hours"`
-	TotalTasks         int              `json:"total_tasks"`
-	TotalWorkHours     float64          `json:"total_work_hours"`
-	ActualWorkHours    float64          `json:"actual_work_hours"`
-	TotalUpcomingHours float64          `json:"total_upcoming_hours"`
-	Tasks              []TaskInResponse `json:"tasks"`
+	ClickupID                  int64            `json:"clickup_id"`
+	Username                   string           `json:"username"`
+	Email                      string           `json:"email"`
+	Name                       string           `json:"name"`
+	TotalSpentHours            float64          `json:"total_spent_hours"`
+	ExpectedHours              float64          `json:"expected_hours"`
+	TotalTasks                 int              `json:"total_tasks"`
+	TotalWorkHours             float64          `json:"total_work_hours"`
+	ActualWorkHours            float64          `json:"actual_work_hours"`
+	TotalUpcomingHours         float64          `json:"total_upcoming_hours"`
+	OnTimeCompletionPercentage *string          `json:"on_time_completion_percentage,omitempty"`
+	Tasks                      []TaskInResponse `json:"tasks"`
 }
 
 type TasksByAssigneeResponse struct {

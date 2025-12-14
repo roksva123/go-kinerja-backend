@@ -19,6 +19,8 @@ type TaskInResponse struct {
 	TimeEfficiencyPercentage *string  `json:"time_efficiency_percentage,omitempty"`
 	RemainingTimeHours       *float64 `json:"-"` // Disembunyikan dari JSON
 	RemainingTimeFormatted   *string  `json:"remaining_time,omitempty"`
+	ActualDurationFormatted  *string  `json:"actual_duration,omitempty"`
+	ScheduleStatus           *string  `json:"schedule_status,omitempty"`
 }
 
 type AssigneeWithTasks struct {

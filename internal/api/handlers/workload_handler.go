@@ -164,6 +164,8 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		for j, originalTask := range originalAssignee.Tasks {
 			var timeEfficiency *float64
 			var remainingHours *float64
+			var actualDuration *float64
+			var scheduleStatus *string
 
 			// --- START: Kalkulasi Metrik Baru ---
 			// 1. Hitung Remaining Time (Sisa Waktu)
@@ -176,6 +178,30 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			if originalTask.TimeSpentHours > 0 && originalTask.TimeEstimateHours > 0 {
 				efisiensiWaktu := (originalTask.TimeEstimateHours / originalTask.TimeSpentHours) * 100
 				timeEfficiency = &efisiensiWaktu
+			}
+
+			// 3. Hitung Durasi Aktual (donedate - startdate)
+			if originalTask.DateDone != nil && originalTask.StartDate != nil {
+				durasi := originalTask.DateDone.Sub(*originalTask.StartDate).Hours()
+				actualDuration = &durasi
+			}
+
+			// 4. Tentukan Schedule Status
+			if remainingHours != nil {
+				rh := *remainingHours
+				if rh > 0 {
+					status := "Early"
+					scheduleStatus = &status
+				} else if rh == 0 {
+					status := "On Time"
+					scheduleStatus = &status
+				} else { // rh < 0
+					status := "Late" // Default status untuk terlambat
+					if actualDuration != nil && math.Abs(rh) >= *actualDuration {
+						status = "Severely Late"
+					}
+					scheduleStatus = &status
+				}
 			}
 			// --- END: Kalkulasi Metrik Baru ---
 
@@ -196,6 +222,8 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				DateClosed:        formatTimePtr(originalTask.DateClosed),
 				TimeEfficiencyPercentage: formatEfficiency(timeEfficiency),
 				RemainingTimeFormatted:     formatRemainingHours(remainingHours),
+				ActualDurationFormatted:    formatRemainingHours(actualDuration),
+				ScheduleStatus:             scheduleStatus,
 			}
 		}
 

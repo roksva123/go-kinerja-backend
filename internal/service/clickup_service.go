@@ -1097,7 +1097,7 @@ func (s *ClickUpService) GetTasksByAssignee(ctx context.Context, startMs, endMs 
 			continue 
 		}
 
-		totalSpentHours := summary.ActualWorkHours
+		totalSpentHours := summary.TotalSpentHours
 
 		assignee := model.AssigneeWithTasks{
 			ClickUpID:          summary.UserID,
@@ -1107,7 +1107,6 @@ func (s *ClickUpService) GetTasksByAssignee(ctx context.Context, startMs, endMs 
 			TotalSpentHours:    totalSpentHours,
 			ExpectedHours:      summary.TotalWorkHours,
 			TotalTasks:         summary.TotalTasks,
-			ActualWorkHours:    summary.ActualWorkHours,
 			TotalUpcomingHours: summary.TotalUpcomingHours,
 			Tasks:              tasks,
 		}

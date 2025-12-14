@@ -202,13 +202,10 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		}
 		// --- END: Kalkulasi ---
 
-		// --- START: Kalkulasi Actual Work Hours ---
-		var totalActualWorkHours float64
+		// --- START: Kalkulasi Expected Hours (dari Time Estimate) ---
+		var totalExpectedHours float64
 		for _, task := range originalAssignee.Tasks {
-			// Hitung hanya untuk tugas yang sudah selesai dan memiliki tanggal yang valid
-			if task.StartDate != nil && task.DateDone != nil {
-				totalActualWorkHours += task.DateDone.Sub(*task.StartDate).Hours()
-			}
+			totalExpectedHours += task.TimeEstimateHours
 		}
 		// --- END: Kalkulasi ---
 
@@ -219,9 +216,9 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			Email:              originalAssignee.Email,
 			Name:               originalAssignee.Name,
 			TotalSpentHours:    originalAssignee.TotalSpentHours,
-			ExpectedHours:      originalAssignee.ExpectedHours, 
+			ExpectedHours:      originalAssignee.ExpectedHours,
+			ActualWorkHours:    originalAssignee.TotalSpentHours,
 			TotalTasks:         originalAssignee.TotalTasks,
-			ActualWorkHours:    math.Round(totalActualWorkHours),
 			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
 			OnTimeCompletionPercentage: onTimePercentage,
 			Tasks:              formattedTasks, 

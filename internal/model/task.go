@@ -174,7 +174,7 @@ type TaskSummary struct {
 	Email              string  `json:"email"`
 	TotalTasks         int     `json:"total_tasks"`
 	TotalWorkHours     float64 `json:"total_work_hours"`
-	ActualWorkHours    float64 `json:"actual_work_hours"`
+	TotalSpentHours    float64 `json:"total_spent_hours"`
 	TotalUpcomingHours float64 `json:"total_upcoming_hours"`
 }
 

@@ -1443,7 +1443,7 @@ func (r *PostgresRepo) GetTasksSummary(
 
 	summary := &model.TaskSummary{
 		TotalTasks:         totalTasks,
-		ActualWorkHours:    totalTimeSpent,
+		TotalSpentHours:    totalTimeSpent,
 		TotalUpcomingHours: totalTimeEstimate,
 	}
 
@@ -1457,9 +1457,7 @@ func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, en
 			u.name,
 			u.email,
 			COUNT(t.id) FILTER (WHERE t.id IS NOT NULL) AS total_tasks,
-			COALESCE(SUM(t.time_spent_hours) FILTER (
-				WHERE ts.type IN ('closed', 'done', 'complete') OR LOWER(ts.name) LIKE '%done%' OR LOWER(ts.name) LIKE '%completed%'
-			), 0) AS actual_work_hours,
+			COALESCE(SUM(t.time_spent_hours), 0) AS total_spent_hours,
 			COALESCE(SUM(t.time_estimate_hours) FILTER (
 				WHERE ts.type = 'open' OR LOWER(ts.name) LIKE '%to do%'
 			), 0) AS total_upcoming_hours
@@ -1488,20 +1486,20 @@ func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, en
 
 	for rows.Next() {
 		var s model.TaskSummary
-		var totalTimeSpent, totalUpcomingEstimate float64
+		var totalSpent, totalUpcomingEstimate float64
 
 		if err := rows.Scan(
 			&s.UserID,
 			&s.Name,
 			&s.Email,
 			&s.TotalTasks,
-			&totalTimeSpent,
+			&totalSpent,
 			&totalUpcomingEstimate,
 		); err != nil {
 			return nil, fmt.Errorf("scanning task summary row failed: %w", err)
 		}
 
-		s.ActualWorkHours = totalTimeSpent
+		s.TotalSpentHours = totalSpent
 		s.TotalUpcomingHours = totalUpcomingEstimate
 		s.TotalWorkHours = expectedWorkHours
 

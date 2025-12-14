@@ -99,23 +99,19 @@ func (s *WorkloadService) GetTasksByAssignee(ctx context.Context, start, end tim
 			fmt.Printf("WARNING: could not get tasks for user %d: %v\n", summary.UserID, err)
 		}
 
-		totalSpentHours := summary.ActualWorkHours
-
 		assignee := model.AssigneeWithTasks{
 			ClickUpID:          summary.UserID,
 			Username:           summary.Name,
 			Email:              summary.Email,
 			Name:               summary.Name,
-			TotalSpentHours:    totalSpentHours,
+			TotalSpentHours:    summary.TotalSpentHours,
 			ExpectedHours:      summary.TotalWorkHours,
 			TotalTasks:         summary.TotalTasks,
-			ActualWorkHours:    summary.ActualWorkHours,
 			TotalUpcomingHours: summary.TotalUpcomingHours,
 			Tasks:              tasks,
 		}
 		assignees = append(assignees, assignee)
 	}
-
 	response := &model.TasksByAssigneeResponse{
 		Count:     len(assignees),
 		Assignees: assignees,

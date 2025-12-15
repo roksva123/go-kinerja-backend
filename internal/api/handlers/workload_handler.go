@@ -183,7 +183,7 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			var actualDuration *float64
 			var scheduleStatus *string
 
-			// hitung metrik jika status task adalah 'done dev' atau 'completed'
+			// hitung matrik
 			statusNameLower := strings.ToLower(originalTask.StatusName)
 			if statusNameLower == "done dev" || statusNameLower == "completed" {
 				// --- START: Kalkulasi Metrik Baru ---

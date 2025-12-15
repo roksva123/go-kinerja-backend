@@ -150,43 +150,42 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 
 	sortOrder := c.DefaultQuery("sort", "desc")
 
-	// 1. Ambil data asli dari service
 	originalResponse, err := h.workloadSvc.GetTasksByRangeGrouped(c.Request.Context(), startDate, endDate, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 2. Transformasi data ke format respons yang diinginkan
 	responseAssignees := make([]AssigneeWithTasks, len(originalResponse.Assignees))
 	for i, originalAssignee := range originalResponse.Assignees {
 		formattedTasks := make([]TaskInResponse, len(originalAssignee.Tasks))
 		for j, originalTask := range originalAssignee.Tasks {
 			var timeEfficiency *float64
 			var remainingHours *float64
-			var actualDuration *float64
+				var actualDuration *float64
 			var scheduleStatus *string
 
 			// --- START: Kalkulasi Metrik Baru ---
-			// 1. Hitung Remaining Time (Sisa Waktu)
+			//     Hitung Remaining Time 
 			if originalTask.DueDate != nil && originalTask.DateDone != nil {
 				sisaWaktu := originalTask.DueDate.Sub(*originalTask.DateDone).Hours()
 				remainingHours = &sisaWaktu
 			}
 
-			// 2. Hitung Time Efficiency Percentage (berdasarkan estimasi kerja)
+			// Time Efficiency Percentage 
 			if originalTask.TimeSpentHours > 0 && originalTask.TimeEstimateHours > 0 {
-				efisiensiWaktu := (originalTask.TimeEstimateHours / originalTask.TimeSpentHours) * 100
+				// Bulatkan ke 2 desimal
+				efisiensiWaktu := math.Round(((originalTask.TimeEstimateHours/originalTask.TimeSpentHours)*100)*100) / 100
 				timeEfficiency = &efisiensiWaktu
 			}
 
-			// 3. Hitung Durasi Aktual (donedate - startdate)
+			// Durasi Aktual 
 			if originalTask.DateDone != nil && originalTask.StartDate != nil {
 				durasi := originalTask.DateDone.Sub(*originalTask.StartDate).Hours()
 				actualDuration = &durasi
 			}
 
-			// 4. Tentukan Schedule Status
+			// Tentukan Schedule Status
 			if remainingHours != nil {
 				rh := *remainingHours
 				if rh > 0 {
@@ -195,8 +194,8 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				} else if rh == 0 {
 					status := "On Time"
 					scheduleStatus = &status
-				} else { // rh < 0
-					status := "Late" // Default status untuk terlambat
+				} else { 
+					status := "Late" 
 					if actualDuration != nil && math.Abs(rh) >= *actualDuration {
 						status = "Severely Late"
 					}
@@ -220,7 +219,7 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				DueDate:           formatTimePtr(originalTask.DueDate),
 				DateDone:          formatTimePtr(originalTask.DateDone),
 				DateClosed:        formatTimePtr(originalTask.DateClosed),
-				TimeEfficiencyPercentage: formatEfficiency(timeEfficiency),
+				TimeEfficiencyPercentage: timeEfficiency,
 				RemainingTimeFormatted:     formatRemainingHours(remainingHours),
 				ActualDurationFormatted:    formatRemainingHours(actualDuration),
 				ScheduleStatus:             scheduleStatus,
@@ -233,20 +232,20 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		for _, task := range originalAssignee.Tasks {
 			if task.DateDone != nil {
 				completedCount++
-				if task.DueDate != nil && !task.DateDone.After(*task.DueDate) { // Cek jika donedate <= duedate
+				if task.DueDate != nil && !task.DateDone.After(*task.DueDate) { 
 					onTimeCount++
 				}
 			}
 		}
 
-		var onTimePercentage *string
+		var onTimePercentage *float64
 		if completedCount > 0 {
 			percentage := (float64(onTimeCount) / float64(completedCount)) * 100
-			onTimePercentage = formatEfficiency(&percentage) // Menggunakan kembali fungsi format yang ada
+			roundedPercentage := math.Round(percentage*100) / 100
+			onTimePercentage = &roundedPercentage
 		}
 		// --- END: Kalkulasi ---
 
-		// Salin field dari originalAssignee ke responseAssignees[i] secara manual
 		responseAssignees[i] = AssigneeWithTasks{
 			ClickupID:          originalAssignee.ClickUpID,
 			Username:           originalAssignee.Username,
@@ -255,7 +254,7 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 			TotalSpentHours:    originalAssignee.TotalSpentHours,
 			ExpectedHours:      originalAssignee.ExpectedHours,
 			TotalTasks:         originalAssignee.TotalTasks,
-			ActualWorkHours:    originalAssignee.TotalSpentHours, // Sesuai aturan baru: actual_work_hours = SUM(time_spent_hours)
+			ActualWorkHours:    originalAssignee.TotalSpentHours, 
 			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
 			OnTimeCompletionPercentage: onTimePercentage,
 			Tasks:              formattedTasks, 

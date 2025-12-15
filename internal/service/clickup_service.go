@@ -872,9 +872,9 @@ func (s *ClickUpService) upsertLists(ctx context.Context, lists []model.List) er
 }
 
 func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int64, sortOrder string) ([]model.TaskDetail, error) {
-	orderDirection := "DESC" // Default: terbaru
+	orderDirection := "DESC" 
 	if strings.ToLower(sortOrder) == "asc" {
-		orderDirection = "ASC" // Terlama
+		orderDirection = "ASC" 
 	}
 
 	query := `
@@ -934,7 +934,7 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 			return nil, err
 		}
 
-		taskDetail := model.TaskDetail{ // Variabel taskDetail dibuat di sini
+		taskDetail := model.TaskDetail{ 
 			ID:          taskID,
 			Name:        taskName,
 			Description: description,
@@ -1015,15 +1015,13 @@ func (s *ClickUpService) GetTasksByRange(ctx context.Context, startMs, endMs int
 
 
 func (s *ClickUpService) AllSync(ctx context.Context) error {
-	// Call the progress-based function with a nil channel, as we don't need to track progress here.
 	return s.AllSyncWithProgress(ctx, nil)
 }
 
 
 func (s *ClickUpService) AllSyncWithProgress(ctx context.Context, progressChan chan<- string) error {
-	// Helper function to safely send progress messages
 	sendProgress := func(msg string) {
-		log.Println(msg) // Also log to console
+		log.Println(msg) 
 		if progressChan != nil {
 			progressChan <- msg
 		}

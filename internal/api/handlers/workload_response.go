@@ -16,8 +16,8 @@ type TaskInResponse struct {
 	TimeSpentHours    float64 `json:"time_spent_hours"`
 	Category          string  `json:"category"`
 
-	TimeEfficiencyPercentage *string  `json:"time_efficiency_percentage,omitempty"`
-	RemainingTimeHours       *float64 `json:"-"` // Disembunyikan dari JSON
+	TimeEfficiencyPercentage *float64 `json:"time_efficiency_percentage,omitempty"`
+	RemainingTimeHours       *float64 `json:"-"`
 	RemainingTimeFormatted   *string  `json:"remaining_time,omitempty"`
 	ActualDurationFormatted  *string  `json:"actual_duration,omitempty"`
 	ScheduleStatus           *string  `json:"schedule_status,omitempty"`
@@ -33,7 +33,7 @@ type AssigneeWithTasks struct {
 	TotalTasks                 int              `json:"total_tasks"`
 	ActualWorkHours            float64          `json:"actual_work_hours"`
 	TotalUpcomingHours         float64          `json:"total_upcoming_hours"`
-	OnTimeCompletionPercentage *string          `json:"on_time_completion_percentage,omitempty"`
+	OnTimeCompletionPercentage *float64         `json:"on_time_completion_percentage,omitempty"`
 	Tasks                      []TaskInResponse `json:"tasks"`
 }
 

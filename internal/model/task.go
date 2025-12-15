@@ -195,7 +195,6 @@ type TaskAssignee struct {
     Initials  string  `json:"initials"`
 }
 
-// AssigneeWithTasks represents a user with their grouped tasks and summary.
 type AssigneeWithTasks struct {
 	ClickUpID          int64       `json:"clickup_id"`
 	Username           string      `json:"username"`
@@ -209,7 +208,6 @@ type AssigneeWithTasks struct {
 	Tasks              []TaskItem  `json:"tasks"`
 }
 
-// TasksByAssigneeResponse is the model for the final API response.
 type TasksByAssigneeResponse struct {
 	Count     int                 `json:"count"`
 	Assignees []AssigneeWithTasks `json:"assignees"`

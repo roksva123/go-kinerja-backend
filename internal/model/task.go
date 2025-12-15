@@ -172,6 +172,7 @@ type TaskSummary struct {
 	UserID             int64   `json:"user_id"`
 	Name               string  `json:"name"`
 	Email              string  `json:"email"`
+	Role               string  `json:"role"`
 	TotalTasks         int     `json:"total_tasks"`
 	TotalWorkHours     float64 `json:"total_work_hours"`
 	TotalSpentHours    float64 `json:"total_spent_hours"`
@@ -199,6 +200,7 @@ type AssigneeWithTasks struct {
 	ClickUpID          int64       `json:"clickup_id"`
 	Username           string      `json:"username"`
 	Email              string      `json:"email"`
+	Role               string      `json:"role"`
 	Name               string      `json:"name"`
 	TotalSpentHours    float64     `json:"total_spent_hours"`
 	ExpectedHours      float64     `json:"expected_hours"`

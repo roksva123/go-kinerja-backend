@@ -103,6 +103,7 @@ func (s *WorkloadService) GetTasksByAssignee(ctx context.Context, start, end tim
 			ClickUpID:          summary.UserID,
 			Username:           summary.Name,
 			Email:              summary.Email,
+			Role:               summary.Role,
 			Name:               summary.Name,
 			TotalSpentHours:    summary.TotalSpentHours,
 			ExpectedHours:      summary.TotalWorkHours,

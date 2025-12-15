@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -128,6 +129,23 @@ func formatRemainingHours(hours *float64) *string {
 	return &s
 }
 
+// formatWorkHours 
+func formatWorkHours(hours *float64) *string {
+	if hours == nil {
+		return nil
+	}
+	h := *hours
+	sign := ""
+	if h < 0 {
+		sign = "-"
+		h = -h
+	}
+	days := int(h / 8)
+	remainingHours := int(math.Mod(h, 8))
+	s := fmt.Sprintf("%s%d hari, %d jam", sign, days, remainingHours)
+	return &s
+}
+
 func (h *WorkloadHandler) AllSync(c *gin.Context) {
 	h.SyncAll(c)
 }
@@ -162,44 +180,62 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		for j, originalTask := range originalAssignee.Tasks {
 			var timeEfficiency *float64
 			var remainingHours *float64
-				var actualDuration *float64
+			var actualDuration *float64
 			var scheduleStatus *string
 
-			// --- START: Kalkulasi Metrik Baru ---
-			//     Hitung Remaining Time 
-			if originalTask.DueDate != nil && originalTask.DateDone != nil {
-				sisaWaktu := originalTask.DueDate.Sub(*originalTask.DateDone).Hours()
+			// Hanya hitung metrik jika status task adalah 'done dev' atau 'completed'
+			statusNameLower := strings.ToLower(originalTask.StatusName)
+			if statusNameLower == "done dev" || statusNameLower == "completed" {
+				// --- START: Kalkulasi Metrik Baru ---
+				//  Remaining Time 
+				sisaWaktu := originalTask.TimeEstimateHours - originalTask.TimeSpentHours
 				remainingHours = &sisaWaktu
-			}
 
-			// Time Efficiency Percentage 
-			if originalTask.TimeSpentHours > 0 && originalTask.TimeEstimateHours > 0 {
-				// Bulatkan ke 2 desimal
-				efisiensiWaktu := math.Round(((originalTask.TimeEstimateHours/originalTask.TimeSpentHours)*100)*100) / 100
-				timeEfficiency = &efisiensiWaktu
-			}
+				// Time Efficiency Percentage
+				if originalTask.TimeSpentHours > 0 {
+					efisiensi := (originalTask.TimeEstimateHours / originalTask.TimeSpentHours) * 100
+					roundedEfisiensi := math.Round(efisiensi*100) / 100
+					timeEfficiency = &roundedEfisiensi
+				} else {
+					zero := 0.0
+					timeEfficiency = &zero 
+				}
 
-			// Durasi Aktual 
-			if originalTask.DateDone != nil && originalTask.StartDate != nil {
-				durasi := originalTask.DateDone.Sub(*originalTask.StartDate).Hours()
-				actualDuration = &durasi
-			}
+				// Durasi Aktual
+				actualDuration = &originalTask.TimeSpentHours
 
-			// Tentukan Schedule Status
-			if remainingHours != nil {
-				rh := *remainingHours
-				if rh > 0 {
-					status := "Early"
-					scheduleStatus = &status
-				} else if rh == 0 {
-					status := "On Time"
-					scheduleStatus = &status
-				} else { 
-					status := "Late" 
-					if actualDuration != nil && math.Abs(rh) >= *actualDuration {
-						status = "Severely Late"
+				// Tentukan Schedule Status
+				if originalTask.DueDate != nil && originalTask.DateDone != nil {
+					calendarRemainingHours := originalTask.DueDate.Sub(*originalTask.DateDone).Hours()
+					if calendarRemainingHours > 0 {
+						status := "Early"
+						scheduleStatus = &status
+					} else if calendarRemainingHours == 0 {
+						status := "On Time"
+						scheduleStatus = &status
+					} else {
+						status := "Late"
+						if originalTask.StartDate != nil {
+							calendarActualDuration := originalTask.DateDone.Sub(*originalTask.StartDate).Hours()
+							if math.Abs(calendarRemainingHours) >= calendarActualDuration {
+								status = "Severely Late"
+							}
+						}
+						scheduleStatus = &status
 					}
-					scheduleStatus = &status
+				}
+			} else {
+				remainingHours = nil
+				actualDuration = nil
+				scheduleStatus = nil
+
+				if originalTask.TimeSpentHours > 0 {
+					efisiensi := (originalTask.TimeEstimateHours / originalTask.TimeSpentHours) * 100
+					roundedEfisiensi := math.Round(efisiensi*100) / 100
+					timeEfficiency = &roundedEfisiensi
+				} else if originalTask.TimeEstimateHours > 0 {
+					zero := 0.0
+					timeEfficiency = &zero
 				}
 			}
 			// --- END: Kalkulasi Metrik Baru ---
@@ -219,9 +255,9 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 				DueDate:           formatTimePtr(originalTask.DueDate),
 				DateDone:          formatTimePtr(originalTask.DateDone),
 				DateClosed:        formatTimePtr(originalTask.DateClosed),
-				TimeEfficiencyPercentage: timeEfficiency,
-				RemainingTimeFormatted:     formatRemainingHours(remainingHours),
-				ActualDurationFormatted:    formatRemainingHours(actualDuration),
+				TimeEfficiencyPercentage:   timeEfficiency,
+				RemainingTimeFormatted:   formatWorkHours(remainingHours), 
+				ActualDurationFormatted:  formatWorkHours(actualDuration), 
 				ScheduleStatus:             scheduleStatus,
 			}
 		}
@@ -232,7 +268,7 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		for _, task := range originalAssignee.Tasks {
 			if task.DateDone != nil {
 				completedCount++
-				if task.DueDate != nil && !task.DateDone.After(*task.DueDate) { 
+				if task.DueDate != nil && !task.DateDone.After(*task.DueDate) {
 					onTimeCount++
 				}
 			}
@@ -249,15 +285,15 @@ func (h *WorkloadHandler) GetTasksByRange(c *gin.Context) {
 		responseAssignees[i] = AssigneeWithTasks{
 			ClickupID:          originalAssignee.ClickUpID,
 			Username:           originalAssignee.Username,
-			Email:              originalAssignee.Email,
+			Role:               originalAssignee.Role,
 			Name:               originalAssignee.Name,
 			TotalSpentHours:    originalAssignee.TotalSpentHours,
 			ExpectedHours:      originalAssignee.ExpectedHours,
 			TotalTasks:         originalAssignee.TotalTasks,
-			ActualWorkHours:    originalAssignee.TotalSpentHours, 
+			ActualWorkHours:    originalAssignee.TotalSpentHours,
 			TotalUpcomingHours: originalAssignee.TotalUpcomingHours,
 			OnTimeCompletionPercentage: onTimePercentage,
-			Tasks:              formattedTasks, 
+			Tasks:              formattedTasks,
 		}
 	}
 

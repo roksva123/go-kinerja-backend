@@ -24,9 +24,9 @@ type TaskInResponse struct {
 }
 
 type AssigneeWithTasks struct {
-	ClickupID                  int64            `json:"clickup_id"`
+	ClickupID                  int64            `json:"clickup_id"` // NOTE: This field name has a typo in the original file. It should be ClickUpID.
 	Username                   string           `json:"username"`
-	Email                      string           `json:"email"`
+	Role                       string           `json:"role"`
 	Name                       string           `json:"name"`
 	TotalSpentHours            float64          `json:"total_spent_hours"`
 	ExpectedHours              float64          `json:"expected_hours"`

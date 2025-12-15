@@ -1456,6 +1456,7 @@ func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, en
 			u.clickup_id,
 			u.name,
 			u.email,
+			COALESCE(r.name, '') as role,
 			COUNT(t.id) FILTER (WHERE t.id IS NOT NULL) AS total_tasks,
 			COALESCE(SUM(t.time_spent_hours), 0) AS total_spent_hours,
 			COALESCE(SUM(t.time_estimate_hours) FILTER (
@@ -1468,9 +1469,9 @@ func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, en
             (t.date_done IS NOT NULL AND t.date_done BETWEEN $1 AND $2) OR
             (t.date_closed IS NOT NULL AND t.date_closed BETWEEN $1 AND $2)
 		)
-		LEFT JOIN task_statuses ts ON t.status_id = ts.id
+		LEFT JOIN task_statuses ts ON t.status_id = ts.id LEFT JOIN roles r ON u.role_id = r.id
 		WHERE u.status_id = (SELECT id FROM user_statuses WHERE name = 'aktif')
-		GROUP BY u.clickup_id, u.name, u.email
+		GROUP BY u.clickup_id, u.name, u.email, r.name
 		ORDER BY u.name ASC;
 	`
 
@@ -1492,6 +1493,7 @@ func (r *PostgresRepo) GetTasksSummaryByDateRange(ctx context.Context, start, en
 			&s.UserID,
 			&s.Name,
 			&s.Email,
+			&s.Role,
 			&s.TotalTasks,
 			&totalSpent,
 			&totalUpcomingEstimate,
